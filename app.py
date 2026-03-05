@@ -1,5 +1,21 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import plotly.graph_objects as go
+import json
+import os
+from collections import defaultdict
+
+# Page config MUST be the first Streamlit command
+st.set_page_config(
+    page_title="Mismatch Hunter v8.0",
+    page_icon="🎯",
+    layout="wide"
+)
+
 # ============================================================================
-# TIER-BASED PATTERN RECOGNITION ENGINE - WITH FIXED _classify_match
+# TIER-BASED PATTERN RECOGNITION ENGINE
 # ============================================================================
 
 class TierBasedHunter:
@@ -132,8 +148,8 @@ class TierBasedHunter:
         # If no exact match, find closest by tier difference
         similarities = []
         for sig, matches in self.pattern_clusters.items():
-            # Parse signature back to list (safe eval)
-            sig_tiers = [int(x) for x in sig.strip('[]').split(', ')]
+            # Parse signature back to list
+            sig_tiers = [int(x.strip()) for x in sig.strip('[]').split(',')]
             
             # Calculate tier difference (lower = more similar)
             diff = 0
@@ -364,23 +380,29 @@ class TierBasedHunter:
 
 
 # ============================================================================
-# UI COMPONENTS - REST OF THE CODE REMAINS THE SAME
+# HELPER FUNCTIONS
 # ============================================================================
 
 def tier_to_emoji(tier, category):
     """Convert tier to emoji for display"""
     if category == 'da':
-        return ["💥", "⚡", "📊", "🐢", "🛡️"][tier-1]
+        emojis = ["💥", "⚡", "📊", "🐢", "🛡️"]
     elif category == 'btts':
-        return ["🎯", "⚽", "🤔", "🧤", "🚫"][tier-1]
+        emojis = ["🎯", "⚽", "🤔", "🧤", "🚫"]
     else:  # over
-        return ["🔥", "📈", "⚖️", "📉", "💤"][tier-1]
+        emojis = ["🔥", "📈", "⚖️", "📉", "💤"]
+    return emojis[tier-1]
+
+
+# ============================================================================
+# MAIN UI
+# ============================================================================
 
 def main():
     st.title("🎯 Mismatch Hunter v8.0")
     st.markdown("### Tier-Based Pattern Recognition - The Universal Football Language")
     
-    # Initialize hunter
+    # Initialize hunter in session state
     if 'hunter' not in st.session_state:
         st.session_state.hunter = TierBasedHunter()
     
@@ -598,6 +620,7 @@ def main():
         <p>Converting raw numbers to football meaning • Learning league-specific adjustments • Universal logic</p>
     </div>
     """, unsafe_allow_html=True)
+
 
 if __name__ == "__main__":
     main()
