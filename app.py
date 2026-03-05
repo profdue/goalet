@@ -26,6 +26,7 @@ class TierBasedHunter:
     
     def __init__(self):
         self.knowledge_base = self._initialize_knowledge()
+        self.pattern_clusters = defaultdict(list)
         self.league_adjustments = defaultdict(lambda: 0.0)
         self._build_initial_clusters()
     
@@ -67,60 +68,69 @@ class TierBasedHunter:
     def _initialize_knowledge(self):
         """Initialize with tier-based knowledge"""
         return [
-            # PATTERN 1: [1,1,1,1,1,1] - ELITE ATTACK (Bundesliga style)
+            # PATTERN 1: [1,2,2,2,1,1] - ELITE ATTACK (Bundesliga style)
             {'home_da': 82, 'away_da': 78, 'home_btts': 62, 'away_btts': 62,
              'home_over': 65, 'away_over': 65, 'elite': 1, 'derby': 0, 'relegation': 0,
-             'goals': 3.2, 'btts': 1, 'league': 'Bundesliga'},
+             'goals': 3.2, 'btts': 1, 'league': 'Bundesliga', 
+             'home_team': 'Bayern', 'away_team': 'Dortmund'},
             
-            # PATTERN 2: [2,2,2,2,2,2] - STRONG BOTH (EPL top 4)
+            # PATTERN 2: [2,2,2,2,2,3] - STRONG BOTH (EPL top 4)
             {'home_da': 76, 'away_da': 72, 'home_btts': 58, 'away_btts': 56,
              'home_over': 56, 'away_over': 54, 'elite': 1, 'derby': 0, 'relegation': 0,
-             'goals': 2.9, 'btts': 1, 'league': 'EPL'},
+             'goals': 2.9, 'btts': 1, 'league': 'EPL',
+             'home_team': 'Liverpool', 'away_team': 'Arsenal'},
             
             # PATTERN 3: [3,3,3,3,3,3] - MIDTABLE MEDIOCRITY
             {'home_da': 55, 'away_da': 52, 'home_btts': 52, 'away_btts': 50,
              'home_over': 52, 'away_over': 50, 'elite': 0, 'derby': 0, 'relegation': 0,
-             'goals': 2.6, 'btts': 0, 'league': 'La Liga'},
+             'goals': 2.6, 'btts': 0, 'league': 'La Liga',
+             'home_team': 'Valencia', 'away_team': 'Real Sociedad'},
             
             # PATTERN 4: [4,4,4,4,4,4] - WEAK BOTH (Relegation battle)
             {'home_da': 42, 'away_da': 40, 'home_btts': 42, 'away_btts': 40,
              'home_over': 40, 'away_over': 38, 'elite': 0, 'derby': 0, 'relegation': 1,
-             'goals': 2.2, 'btts': 0, 'league': 'Serie A'},
+             'goals': 2.2, 'btts': 0, 'league': 'Serie A',
+             'home_team': 'Lecce', 'away_team': 'Salernitana'},
             
             # PATTERN 5: [5,5,5,5,5,5] - DEFENSIVE GRIND
             {'home_da': 32, 'away_da': 30, 'home_btts': 32, 'away_btts': 30,
              'home_over': 30, 'away_over': 28, 'elite': 0, 'derby': 0, 'relegation': 1,
-             'goals': 1.8, 'btts': 0, 'league': 'Serie A'},
+             'goals': 1.8, 'btts': 0, 'league': 'Serie A',
+             'home_team': 'Cagliari', 'away_team': 'Empoli'},
             
             # PATTERN 6: [1,4,1,4,1,4] - ELITE HOME vs WEAK AWAY
             {'home_da': 85, 'away_da': 40, 'home_btts': 70, 'away_btts': 38,
              'home_over': 72, 'away_over': 36, 'elite': 1, 'derby': 0, 'relegation': 0,
-             'goals': 3.5, 'btts': 0, 'league': 'Bundesliga'},
+             'goals': 3.5, 'btts': 0, 'league': 'Bundesliga',
+             'home_team': 'Bayern', 'away_team': 'Paderborn'},
             
             # PATTERN 7: [4,1,4,1,4,1] - WEAK HOME vs ELITE AWAY
             {'home_da': 38, 'away_da': 82, 'home_btts': 35, 'away_btts': 68,
              'home_over': 36, 'away_over': 70, 'elite': 1, 'derby': 0, 'relegation': 0,
-             'goals': 3.1, 'btts': 1, 'league': 'Bundesliga'},
+             'goals': 3.1, 'btts': 1, 'league': 'Bundesliga',
+             'home_team': 'Paderborn', 'away_team': 'Bayern'},
             
             # PATTERN 8: [4,4,5,1,4,3] - AUSTRIAN SPECIAL (Home weak attack, away always scores)
             {'home_da': 38, 'away_da': 37, 'home_btts': 35, 'away_btts': 65,
              'home_over': 40, 'away_over': 45, 'elite': 0, 'derby': 0, 'relegation': 1,
-             'goals': 3.8, 'btts': 1, 'league': 'Austria'},
+             'goals': 3.8, 'btts': 1, 'league': 'Austria',
+             'home_team': 'Blau Weiss', 'away_team': 'WSG Tirol'},
             
             # PATTERN 9: [2,2,1,3,2,3] - MIXED ATTACK (Common)
             {'home_da': 68, 'away_da': 65, 'home_btts': 68, 'away_btts': 48,
              'home_over': 62, 'away_over': 48, 'elite': 0, 'derby': 0, 'relegation': 0,
-             'goals': 2.8, 'btts': 1, 'league': 'EPL'},
+             'goals': 2.8, 'btts': 1, 'league': 'EPL',
+             'home_team': 'Aston Villa', 'away_team': 'Brighton'},
             
             # PATTERN 10: [3,3,2,4,3,4] - LEANING DEFENSIVE
             {'home_da': 54, 'away_da': 52, 'home_btts': 58, 'away_btts': 42,
              'home_over': 52, 'away_over': 40, 'elite': 0, 'derby': 0, 'relegation': 0,
-             'goals': 2.4, 'btts': 0, 'league': 'La Liga'},
+             'goals': 2.4, 'btts': 0, 'league': 'La Liga',
+             'home_team': 'Getafe', 'away_team': 'Cadiz'},
         ]
     
     def _build_initial_clusters(self):
         """Group matches by tier signature"""
-        self.pattern_clusters = defaultdict(list)
         for match in self.knowledge_base:
             signature = str(self._get_tier_signature(match))
             self.pattern_clusters[signature].append(match)
@@ -138,11 +148,13 @@ class TierBasedHunter:
         # If no exact match, find closest by tier difference
         similarities = []
         for sig, matches in self.pattern_clusters.items():
-            # Parse signature back to list
-            sig_tiers = eval(sig)
+            # Parse signature back to list (safe eval)
+            sig_tiers = [int(x) for x in sig.strip('[]').split(', ')]
             
             # Calculate tier difference (lower = more similar)
-            diff = sum(abs(a - b) for a, b in zip(input_tiers, sig_tiers))
+            diff = 0
+            for a, b in zip(input_tiers, sig_tiers):
+                diff += abs(a - b)
             
             # Convert diff to similarity (0 diff = 1.0, max diff 24 = 0.0)
             similarity = max(0, 1 - (diff / 24))
@@ -226,7 +238,9 @@ class TierBasedHunter:
         tiers = self._get_tier_signature(match_input)
         
         # Pattern 1: ELITE ATTACK [1,1,1,1,1,1] or similar
-        if sum(t[:2]) <= 3 and sum(t[2:4]) <= 3 and sum(t[4:]) <= 3:
+        if (tiers[0] <= 2 and tiers[1] <= 2 and 
+            tiers[2] <= 2 and tiers[3] <= 2 and 
+            tiers[4] <= 2 and tiers[5] <= 2):
             return (
                 "💥 EXPLOSION",
                 "STRONG Over 2.5 and BTTS",
@@ -234,7 +248,9 @@ class TierBasedHunter:
             )
         
         # Pattern 2: DEFENSIVE GRIND [4+,4+,4+,4+,4+,4+]
-        if all(t >= 4 for t in tiers):
+        if (tiers[0] >= 4 and tiers[1] >= 4 and 
+            tiers[2] >= 4 and tiers[3] >= 4 and 
+            tiers[4] >= 4 and tiers[5] >= 4):
             return (
                 "🔒 LOCK UNDER",
                 "STRONG Under 2.5, likely no BTTS",
@@ -251,7 +267,8 @@ class TierBasedHunter:
             )
         
         # Pattern 4: AUSTRIAN SPECIAL [4,4,5,1,4,3]
-        if tiers == [4,4,5,1,4,3] or str(tiers) == "[4, 4, 5, 1, 4, 3]":
+        if (tiers[0] == 4 and tiers[1] == 4 and tiers[2] == 5 and 
+            tiers[3] == 1 and tiers[4] == 4 and tiers[5] == 3):
             return (
                 "🎢 AUSTRIAN SPECIAL",
                 "CHAOS MATCH - Away always scores, home might surprise",
@@ -303,10 +320,10 @@ class TierBasedHunter:
         tiers = self._get_tier_signature(match_input)
         
         # Simple rule-based fallback
-        if all(t <= 2 for t in tiers[:2]) and all(t <= 2 for t in tiers[2:4]) and all(t <= 2 for t in tiers[4:]):
+        if all(t <= 2 for t in tiers):
             expected_goals = 3.2
             btts_prob = 65
-        elif all(t >= 4 for t in tiers[:2]) and all(t >= 4 for t in tiers[2:4]) and all(t >= 4 for t in tiers[4:]):
+        elif all(t >= 4 for t in tiers):
             expected_goals = 2.0
             btts_prob = 35
         else:
@@ -334,7 +351,7 @@ class TierBasedHunter:
             'note': "🆕 New tier pattern - learning from this match"
         }
     
-    def learn(self, match_input, actual_goals, actual_btts, league="Unknown"):
+    def learn(self, match_input, actual_goals, actual_btts, home_team, away_team, league="Unknown"):
         """Add new match to knowledge base"""
         new_match = {
             'home_da': match_input['home_da'],
@@ -348,7 +365,9 @@ class TierBasedHunter:
             'relegation': match_input.get('relegation', 0),
             'goals': actual_goals,
             'btts': actual_btts,
-            'league': league
+            'league': league,
+            'home_team': home_team,
+            'away_team': away_team
         }
         
         self.knowledge_base.append(new_match)
@@ -356,15 +375,6 @@ class TierBasedHunter:
         # Update clusters
         signature = str(self._get_tier_signature(new_match))
         self.pattern_clusters[signature].append(new_match)
-        
-        # Update league adjustments (simplified)
-        tier_key = str(self._get_tier_signature(new_match))
-        expected = 2.5  # baseline
-        actual = actual_goals
-        adjustment = actual - expected
-        
-        # Store adjustment for this tier pattern in this league
-        # In production, you'd want more sophisticated learning
         
         return len(self.knowledge_base)
 
@@ -434,12 +444,14 @@ def main():
         
         with col1:
             st.markdown("**🏠 HOME TEAM**")
+            home_team = st.text_input("Home Team Name", "Blau Weiss")
             home_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 38)
             home_btts = st.number_input("BTTS %", 0, 100, 35)
             home_over = st.number_input("Over 2.5 %", 0, 100, 40)
         
         with col2:
             st.markdown("**✈️ AWAY TEAM**")
+            away_team = st.text_input("Away Team Name", "WSG Tirol")
             away_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 37, key="away_da")
             away_btts = st.number_input("BTTS %", 0, 100, 65, key="away_btts")
             away_over = st.number_input("Over 2.5 %", 0, 100, 45, key="away_over")
@@ -449,7 +461,7 @@ def main():
             elite = st.checkbox("⭐ Elite Team Present")
             derby = st.checkbox("🏆 Derby Match")
             relegation = st.checkbox("⚠️ Relegation Battle")
-            league = st.text_input("League (optional)", "Austria", help="Helps with learning league-specific patterns")
+            league = st.text_input("League", "Austria")
         
         submitted = st.form_submit_button("🎯 GENERATE PREDICTION", use_container_width=True)
     
@@ -472,6 +484,9 @@ def main():
         # Display results
         st.markdown("---")
         
+        # Show match header
+        st.subheader(f"🏆 {home_team} vs {away_team}")
+        
         # Show tier signature
         tiers = result['tier_signature']
         st.subheader("🎯 Tier Signature")
@@ -479,7 +494,8 @@ def main():
         cols = st.columns(6)
         tier_labels = ['H-DA', 'A-DA', 'H-BTTS', 'A-BTTS', 'H-OVER', 'A-OVER']
         for i, (col, label) in enumerate(zip(cols, tier_labels)):
-            emoji = tier_to_emoji(tiers[i], 'da' if i < 2 else 'btts' if i < 4 else 'over')
+            category = 'da' if i < 2 else 'btts' if i < 4 else 'over'
+            emoji = tier_to_emoji(tiers[i], category)
             col.metric(label, f"{emoji} {tiers[i]}")
         
         # Main prediction card
@@ -496,7 +512,7 @@ def main():
         
         match_type_key = result['match_type'].split()[0]
         if match_type_key == '🆕':
-            match_type_key = result['match_type'].split()[1]
+            match_type_key = result['match_type'].split()[1] if len(result['match_type'].split()) > 1 else '🔄'
         bg_color = color_map.get(match_type_key, '#F0F0F0')
         
         st.markdown(f"""
@@ -548,12 +564,12 @@ def main():
                     
                     st.markdown(f"""
                     <div style="border: 1px solid #ddd; border-radius: 10px; padding: 15px;">
-                        <h4 style="margin: 0 0 10px 0;">{similarity_pct}% Similar</h4>
+                        <h4 style="margin: 0 0 10px 0;">{match.get('home_team', 'Home')} vs {match.get('away_team', 'Away')}</h4>
+                        <p style="font-size: 14px; color: #666;">{similarity_pct}% Similar | {match.get('league', 'Unknown')}</p>
                         <p><strong>Tiers:</strong> {tier_str}</p>
                         <p>DA: {match['home_da']}/{match['away_da']}</p>
                         <p>BTTS: {match['home_btts']}%/{match['away_btts']}%</p>
                         <p>Over: {match['home_over']}%/{match['away_over']}%</p>
-                        <p><strong>League:</strong> {match.get('league', 'Unknown')}</p>
                         <p style="font-size: 20px; font-weight: bold; margin: 10px 0 0 0;">
                             {match['goals']} goals - {btts_text}
                         </p>
@@ -581,6 +597,8 @@ def main():
                     match_input, 
                     actual_goals, 
                     1 if actual_btts else 0,
+                    home_team,
+                    away_team,
                     league_name
                 )
                 st.success(f"✅ Match added to knowledge base! Total patterns: {total}")
