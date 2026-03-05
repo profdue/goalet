@@ -147,9 +147,22 @@ class TierBasedHunter:
         
         # If no exact match, find closest by tier difference
         similarities = []
+        
         for sig, matches in self.pattern_clusters.items():
-            # Parse signature back to list
-            sig_tiers = [int(x.strip()) for x in sig.strip('[]').split(',')]
+            # Parse signature back to list - HANDLE DIFFERENT FORMATS
+            try:
+                # Remove brackets and split by comma
+                sig_clean = sig.strip('[]')
+                # Split and convert to int, handling spaces
+                sig_tiers = [int(x.strip()) for x in sig_clean.split(',') if x.strip()]
+            except Exception as e:
+                # If parsing fails, skip this signature
+                print(f"Error parsing signature {sig}: {e}")
+                continue
+            
+            # Ensure we have 6 tiers
+            if len(sig_tiers) != 6:
+                continue
             
             # Calculate tier difference (lower = more similar)
             diff = 0
@@ -162,9 +175,12 @@ class TierBasedHunter:
             for match in matches:
                 similarities.append((similarity, match))
         
-        # Sort by similarity
-        similarities.sort(reverse=True)
-        return similarities[:k]
+        # Sort by similarity if we have any matches
+        if similarities:
+            similarities.sort(reverse=True)
+            return similarities[:k]
+        else:
+            return []
     
     def predict(self, match_input):
         """Generate prediction based on tier patterns"""
@@ -451,24 +467,24 @@ def main():
         
         with col1:
             st.markdown("**🏠 HOME TEAM**")
-            home_team = st.text_input("Home Team Name", "Blau Weiss")
-            home_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 38)
-            home_btts = st.number_input("BTTS %", 0, 100, 35)
-            home_over = st.number_input("Over 2.5 %", 0, 100, 40)
+            home_team = st.text_input("Home Team Name", "Bournemouth")
+            home_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 51)
+            home_btts = st.number_input("BTTS %", 0, 100, 68)
+            home_over = st.number_input("Over 2.5 %", 0, 100, 57)
         
         with col2:
             st.markdown("**✈️ AWAY TEAM**")
-            away_team = st.text_input("Away Team Name", "WSG Tirol")
-            away_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 37, key="away_da")
-            away_btts = st.number_input("BTTS %", 0, 100, 65, key="away_btts")
-            away_over = st.number_input("Over 2.5 %", 0, 100, 45, key="away_over")
+            away_team = st.text_input("Away Team Name", "Brentford")
+            away_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 45, key="away_da")
+            away_btts = st.number_input("BTTS %", 0, 100, 54, key="away_btts")
+            away_over = st.number_input("Over 2.5 %", 0, 100, 50, key="away_over")
         
         with col3:
             st.markdown("**🎯 CONTEXT**")
             elite = st.checkbox("⭐ Elite Team Present")
             derby = st.checkbox("🏆 Derby Match")
             relegation = st.checkbox("⚠️ Relegation Battle")
-            league = st.text_input("League", "Austria")
+            league = st.text_input("League", "EPL")
         
         submitted = st.form_submit_button("🎯 GENERATE PREDICTION", use_container_width=True)
     
@@ -582,6 +598,8 @@ def main():
                         </p>
                     </div>
                     """, unsafe_allow_html=True)
+        else:
+            st.info("📝 No exact historical matches found. This is a new pattern! Teach the system after the match.")
         
         # Learning section
         st.markdown("---")
@@ -590,10 +608,10 @@ def main():
         col_l1, col_l2, col_l3, col_l4 = st.columns([2, 1, 2, 2])
         
         with col_l1:
-            actual_goals = st.number_input("Actual Goals", 0, 10, 5)
+            actual_goals = st.number_input("Actual Goals", 0, 10, 2)
         
         with col_l2:
-            actual_btts = st.checkbox("BTTS Happened?", value=True)
+            actual_btts = st.checkbox("BTTS Happened?", value=False)
         
         with col_l3:
             league_name = st.text_input("League for learning", league)
