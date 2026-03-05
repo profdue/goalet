@@ -112,8 +112,8 @@ class PureNumberHunter:
         ])
         
         # Normalize
-        v1_norm = v1 / np.linalg.norm(v1)
-        v2_norm = v2 / np.linalg.norm(v2)
+        v1_norm = v1 / np.linalg.norm(v1) if np.linalg.norm(v1) > 0 else v1
+        v2_norm = v2 / np.linalg.norm(v2) if np.linalg.norm(v2) > 0 else v2
         
         # Cosine similarity
         similarity = np.dot(v1_norm, v2_norm)
@@ -201,8 +201,8 @@ class PureNumberHunter:
             avg_btts >= 58 and avg_over >= 58):
             return (
                 "💥 EXPLOSION",
-                "STRONG Over 2.5 & BTTS",
-                f"🔥 OVER 2.5 & BTTS (expected {expected_goals} goals)"
+                "STRONG Over 2.5 and BTTS",
+                f"🔥 OVER 2.5 and BTTS (expected {expected_goals} goals)"
             )
         
         # DEFENSIVE LOCK: Both teams defensive
@@ -366,7 +366,7 @@ def main():
             )
         
         st.markdown("---")
-        st.markdown(""**
+        st.markdown("""
         **The 11 Numbers:**
         - Home/Away DA (0-100)
         - Home/Away BTTS% (0-100)
@@ -433,7 +433,8 @@ def main():
             '🔄 HYBRID': '#808080'
         }
         
-        bg_color = color_map.get(result['match_type'].split()[0], '#F0F0F0')
+        match_type_key = result['match_type'].split()[0]
+        bg_color = color_map.get(match_type_key, '#F0F0F0')
         
         st.markdown(f"""
         <div style="background-color: {bg_color}20; padding: 30px; border-radius: 15px; border: 3px solid {bg_color};">
@@ -477,6 +478,7 @@ def main():
             for i, (sim, match) in enumerate(result['similar_matches']):
                 with cols[i]:
                     similarity_pct = int(sim * 100)
+                    btts_text = "✅ BTTS" if match['btts'] else "❌ No BTTS"
                     st.markdown(f"""
                     <div style="border: 1px solid #ddd; border-radius: 10px; padding: 15px;">
                         <h4 style="margin: 0 0 10px 0;">{similarity_pct}% Similar</h4>
@@ -484,7 +486,7 @@ def main():
                         <p>BTTS: {match['home_btts']}%/{match['away_btts']}%</p>
                         <p>Over: {match['home_over']}%/{match['away_over']}%</p>
                         <p style="font-size: 20px; font-weight: bold; margin: 10px 0 0 0;">
-                            {match['goals']} goals • {'✅ BTTS' if match['btts'] else '❌ No BTTS'}
+                            {match['goals']} goals - {btts_text}
                         </p>
                     </div>
                     """, unsafe_allow_html=True)
