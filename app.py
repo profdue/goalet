@@ -1,21 +1,5 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-from datetime import datetime
-import plotly.graph_objects as go
-import json
-import os
-from collections import defaultdict
-
-# Page config
-st.set_page_config(
-    page_title="Mismatch Hunter v8.0",
-    page_icon="🎯",
-    layout="wide"
-)
-
 # ============================================================================
-# TIER-BASED PATTERN RECOGNITION ENGINE
+# TIER-BASED PATTERN RECOGNITION ENGINE - WITH FIXED _classify_match
 # ============================================================================
 
 class TierBasedHunter:
@@ -257,7 +241,7 @@ class TierBasedHunter:
                 f"✅ UNDER 2.5 ({expected_goals} goals expected)"
             )
         
-        # Pattern 3: MISMATCH (one team much stronger)
+        # Pattern 3: MISMATCH (one team much stronger in DA)
         if abs(tiers[0] - tiers[1]) >= 2:
             dominant = "Home" if tiers[0] < tiers[1] else "Away"
             return (
@@ -378,8 +362,9 @@ class TierBasedHunter:
         
         return len(self.knowledge_base)
 
+
 # ============================================================================
-# UI COMPONENTS
+# UI COMPONENTS - REST OF THE CODE REMAINS THE SAME
 # ============================================================================
 
 def tier_to_emoji(tier, category):
