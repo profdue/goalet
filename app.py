@@ -6,140 +6,65 @@ from collections import defaultdict
 
 # Page config MUST be the first Streamlit command
 st.set_page_config(
-    page_title="Mismatch Hunter v10.0",
+    page_title="Mismatch Hunter v11.0",
     page_icon="🎯",
     layout="wide"
 )
 
 # ============================================================================
-# TIER-BASED PATTERN RECOGNITION WITH COUNTER THREAT DETECTION
+# HISTORY-BASED PATTERN LEARNING ENGINE
 # ============================================================================
 
-class TierBasedHunter:
+class PatternLearningHunter:
     """
-    League-agnostic pattern recognition using TIERS
-    v10.0 adds Counter Threat detection and honest scoring
+    v11.0 - Learns from historical patterns and overrides tier logic when history contradicts
     """
     
     def __init__(self):
         self.knowledge_base = self._initialize_knowledge()
         self.pattern_clusters = defaultdict(list)
-        self.counter_threats = {}  # Track teams that overperform
+        self.pattern_history = {}  # Stores historical outcomes for each pattern
+        self.counter_threats = {}
         self._build_initial_clusters()
+        self._analyze_pattern_history()
     
     def _da_tier(self, da):
         """Convert DA to tier (1-5)"""
-        if da >= 80: return 1  # Elite attack
-        if da >= 65: return 2  # Strong attack
-        if da >= 50: return 3  # Average attack
-        if da >= 35: return 4  # Weak attack
-        return 5                # Defensive shell
+        if da >= 80: return 1
+        if da >= 65: return 2
+        if da >= 50: return 3
+        if da >= 35: return 4
+        return 5
     
-    def _btts_tier_v2(self, btts, team_name="", league=""):
-        """
-        Enhanced BTTS tier with Counter Threat detection
-        Returns (tier, is_counter_threat)
-        """
-        base_tier = self._btts_tier_base(btts)
-        is_counter = False
-        
-        # Check if this team is a known counter threat
-        if team_name and team_name in self.counter_threats:
-            is_counter = True
-            # Counter threats get special handling
-            if base_tier == 4:  # If stats say Tier 4 but they're counter threat
-                return (4, True)  # Keep tier 4 but mark as counter
-        else:
-            # Auto-detect potential counter threats from knowledge base
-            potential = self._detect_counter_threat(team_name, league)
-            if potential:
-                is_counter = True
-                if team_name:
-                    self.counter_threats[team_name] = {
-                        'league': league,
-                        'detected_date': datetime.now().strftime('%Y-%m-%d')
-                    }
-        
-        return (base_tier, is_counter)
-    
-    def _btts_tier_base(self, btts):
-        """Base BTTS tier (1-5)"""
-        if btts >= 65: return 1  # Always scores
-        if btts >= 55: return 2  # Usually scores
-        if btts >= 45: return 3  # 50/50
-        if btts >= 35: return 4  # Usually doesn't score
-        return 5                  # Never scores
-    
-    def _detect_counter_threat(self, team_name, league):
-        """
-        Detect if a team is a counter threat based on historical performance
-        """
-        if not team_name:
-            return False
-        
-        # Look for this team in knowledge base
-        team_matches = [m for m in self.knowledge_base 
-                       if m.get('home_team') == team_name or m.get('away_team') == team_name]
-        
-        if len(team_matches) < 3:
-            return False
-        
-        # Calculate actual BTTS rate
-        btts_count = 0
-        total = 0
-        for match in team_matches:
-            if match.get('btts') == 1:
-                btts_count += 1
-            total += 1
-        
-        actual_btts_rate = (btts_count / total) * 100
-        
-        # Get average BTTS stat for this team
-        stat_btts = []
-        for match in team_matches:
-            if match.get('home_team') == team_name:
-                stat_btts.append(match.get('home_btts', 0))
-            else:
-                stat_btts.append(match.get('away_btts', 0))
-        
-        avg_stat = np.mean(stat_btts) if stat_btts else 50
-        
-        # If actual performance is significantly better than stats
-        if actual_btts_rate > avg_stat + 10 and avg_stat < 50:
-            return True
-        
-        return False
+    def _btts_tier(self, btts):
+        """Convert BTTS% to tier (1-5)"""
+        if btts >= 65: return 1
+        if btts >= 55: return 2
+        if btts >= 45: return 3
+        if btts >= 35: return 4
+        return 5
     
     def _over_tier(self, over):
         """Convert Over% to tier (1-5)"""
-        if over >= 65: return 1  # Goal fest
-        if over >= 55: return 2  # Goals likely
-        if over >= 45: return 3  # 50/50
-        if over >= 35: return 4  # Goals unlikely
-        return 5                  # Dead game
+        if over >= 65: return 1
+        if over >= 55: return 2
+        if over >= 45: return 3
+        if over >= 35: return 4
+        return 5
     
-    def _get_tier_signature(self, match, home_team="", away_team="", league=""):
-        """Get 6-number tier signature with counter threat detection"""
-        home_btts_tier, home_counter = self._btts_tier_v2(match['home_btts'], home_team, league)
-        away_btts_tier, away_counter = self._btts_tier_v2(match['away_btts'], away_team, league)
-        
-        return {
-            'tiers': [
-                self._da_tier(match['home_da']),
-                self._da_tier(match['away_da']),
-                home_btts_tier,
-                away_btts_tier,
-                self._over_tier(match['home_over']),
-                self._over_tier(match['away_over'])
-            ],
-            'counter_threats': {
-                'home': home_counter,
-                'away': away_counter
-            }
-        }
+    def _get_tier_signature(self, match):
+        """Get 6-number tier signature for a match"""
+        return [
+            self._da_tier(match['home_da']),
+            self._da_tier(match['away_da']),
+            self._btts_tier(match['home_btts']),
+            self._btts_tier(match['away_btts']),
+            self._over_tier(match['home_over']),
+            self._over_tier(match['away_over'])
+        ]
     
     def _initialize_knowledge(self):
-        """Initialize with tier-based knowledge"""
+        """Initialize with tier-based knowledge including Sunderland examples"""
         return [
             # PATTERN 1: [1,2,2,2,1,1] - ELITE ATTACK
             {'home_da': 82, 'away_da': 78, 'home_btts': 62, 'away_btts': 62,
@@ -201,91 +126,67 @@ class TierBasedHunter:
              'goals': 2.4, 'btts': 0, 'league': 'La Liga',
              'home_team': 'Getafe', 'away_team': 'Cadiz'},
             
-            # Add Sunderland as a known counter threat
-            {'home_da': 41, 'away_da': 42, 'home_btts': 36, 'away_btts': 36,
-             'home_over': 36, 'away_over': 44, 'elite': 0, 'derby': 0, 'relegation': 1,
-             'goals': 1.8, 'btts': 0, 'league': 'EPL',
-             'home_team': 'Sunderland', 'away_team': 'Leeds'},
+            # CRITICAL PATTERN: [4,4,2,4,2,4] - Leeds vs Sunderland pattern
+            {'home_da': 42, 'away_da': 41, 'home_btts': 64, 'away_btts': 36,
+             'home_over': 64, 'away_over': 36, 'elite': 0, 'derby': 0, 'relegation': 1,
+             'goals': 1.0, 'btts': 0, 'league': 'EPL',
+             'home_team': 'Leeds', 'away_team': 'Sunderland'},
+            
+            # Another example of same pattern
+            {'home_da': 44, 'away_da': 43, 'home_btts': 62, 'away_btts': 38,
+             'home_over': 60, 'away_over': 40, 'elite': 0, 'derby': 0, 'relegation': 0,
+             'goals': 0.0, 'btts': 0, 'league': 'Championship',
+             'home_team': 'Middlesbrough', 'away_team': 'Stoke'},
         ]
     
     def _build_initial_clusters(self):
         """Group matches by tier signature"""
         for match in self.knowledge_base:
-            sig_data = self._get_tier_signature(
-                match, 
-                match.get('home_team', ''), 
-                match.get('away_team', ''),
-                match.get('league', '')
-            )
-            signature = str(sig_data['tiers'])
+            signature = str(self._get_tier_signature(match))
             self.pattern_clusters[signature].append(match)
     
-    def calculate_contradiction_penalty(self, tiers, counter_threats):
-        """
-        Calculate penalty based on contradictions in the data
-        Higher penalty = less confidence
-        """
-        penalty = 0
-        
-        # Counter threat penalties
-        if counter_threats['away']:
-            penalty += 5  # Away team is sneaky
-        if counter_threats['home']:
-            penalty += 5  # Home team is sneaky
-        
-        # BTTS contradictions
-        if tiers[2] <= 2 and tiers[3] >= 4:
-            # Home scores, away doesn't - normal
-            pass
-        elif tiers[2] >= 4 and tiers[3] <= 2:
-            # Away scores, home doesn't - unusual
-            penalty += 10
-        elif tiers[2] == 4 and tiers[3] == 4:
-            # Both supposedly don't score
-            if counter_threats['home'] or counter_threats['away']:
-                penalty += 15  # But one might!
-        
-        # Over contradictions
-        if abs(tiers[4] - tiers[5]) >= 2:
-            # One team's games high scoring, other low
-            penalty += 8
-        
-        # DA vs Over contradictions
-        if tiers[0] <= 2 and tiers[4] >= 3:
-            # Strong attack but games not high scoring?
-            penalty += 5
-        
-        return min(penalty, 30)  # Max penalty 30%
-    
-    def calculate_honest_score(self, tiers, counter_threats):
-        """
-        Calculate honest score (0-13) with contradictions factored in
-        """
-        base_score = 0
-        
-        # Base points from tiers
-        for t in tiers:
-            base_score += (6 - t)
-        
-        # Subtract penalty
-        penalty = self.calculate_contradiction_penalty(tiers, counter_threats)
-        penalty_points = int(penalty / 3)  # Convert % to points
-        
-        final_score = base_score - penalty_points
-        return max(final_score, 0)  # Can't go below 0
+    def _analyze_pattern_history(self):
+        """Analyze historical outcomes for each pattern"""
+        for signature, matches in self.pattern_clusters.items():
+            if len(matches) >= 2:  # Only analyze patterns with enough data
+                home_scored = 0
+                away_scored = 0
+                over_hit = 0
+                btts_hit = 0
+                total_goals = 0
+                
+                for match in matches:
+                    # Parse score to determine if home/away scored
+                    # For now using btts and goals as proxy
+                    if match['btts'] == 1:
+                        btts_hit += 1
+                        home_scored += 1
+                        away_scored += 1
+                    if match['goals'] >= 3:
+                        over_hit += 1
+                    total_goals += match['goals']
+                
+                self.pattern_history[signature] = {
+                    'count': len(matches),
+                    'home_scored_pct': (home_scored / len(matches)) * 100,
+                    'away_scored_pct': (away_scored / len(matches)) * 100,
+                    'btts_pct': (btts_hit / len(matches)) * 100,
+                    'over_pct': (over_hit / len(matches)) * 100,
+                    'avg_goals': total_goals / len(matches)
+                }
     
     def find_similar_matches(self, match_input, k=5):
-        """Find matches with same or similar tier signature"""
+        """Find matches with EXACT same tier signature first, then similar"""
         input_tiers = match_input['tiers']
         input_sig = str(input_tiers)
         
-        # First try exact signature match
+        # FIRST PRIORITY: Exact signature matches
         if input_sig in self.pattern_clusters:
             matches = [(1.0, i, m) for i, m in enumerate(self.pattern_clusters[input_sig])]
             matches.sort(reverse=True)
             return [(sim, match) for sim, _, match in matches[:k]]
         
-        # If no exact match, find closest by tier difference
+        # SECOND PRIORITY: Similar but not exact (with penalty)
         similarities = []
         for sig, matches in self.pattern_clusters.items():
             try:
@@ -296,172 +197,194 @@ class TierBasedHunter:
             if len(sig_tiers) != 6:
                 continue
             
+            # Calculate tier difference with penalty for different signatures
             diff = 0
+            tier_matches = 0
             for a, b in zip(input_tiers, sig_tiers):
                 diff += abs(a - b)
+                if a == b:
+                    tier_matches += 1
             
+            # Similarity based on diff, but with penalty for not being exact
             similarity = max(0, 1 - (diff / 24))
             
-            for match in matches:
-                similarities.append((similarity, len(similarities), match))
+            # Only include if at least 4 tiers match
+            if tier_matches >= 4:
+                for match in matches:
+                    similarities.append((similarity, len(similarities), match))
         
         similarities.sort(reverse=True)
         return [(sim, match) for sim, _, match in similarities[:k]]
     
+    def get_pattern_insights(self, tiers):
+        """Get historical insights for this pattern"""
+        signature = str(tiers)
+        if signature in self.pattern_history:
+            return self.pattern_history[signature]
+        return None
+    
     def predict(self, match_input, home_team="", away_team="", league=""):
-        """Generate prediction with honest scoring"""
+        """Generate prediction based on history first, tiers second"""
         
-        # Get tier signature with counter threat detection
-        sig_data = self._get_tier_signature(match_input, home_team, away_team, league)
-        tiers = sig_data['tiers']
-        counter_threats = sig_data['counter_threats']
-        
-        # Find similar matches
+        # Get tier signature
+        tiers = self._get_tier_signature(match_input)
         match_for_search = {'tiers': tiers}
+        
+        # Find similar matches (exact signature first)
         similar = self.find_similar_matches(match_for_search)
         
-        if not similar:
-            return self._fallback_prediction(tiers, counter_threats)
+        # Get historical insights for this pattern
+        pattern_history = self.get_pattern_insights(tiers)
         
-        # Calculate weighted averages
-        total_weight = 0
-        weighted_goals = 0
-        weighted_btts = 0
-        
-        for sim, match in similar:
-            weight = sim ** 2
-            total_weight += weight
-            weighted_goals += weight * match['goals']
-            weighted_btts += weight * match['btts']
-        
-        if total_weight > 0:
-            expected_goals = weighted_goals / total_weight
-            btts_prob = (weighted_btts / total_weight) * 100
+        # Calculate weighted averages from similar matches
+        if similar:
+            total_weight = 0
+            weighted_goals = 0
+            weighted_btts = 0
+            
+            for sim, match in similar:
+                weight = sim ** 2
+                total_weight += weight
+                weighted_goals += weight * match['goals']
+                weighted_btts += weight * match['btts']
+            
+            if total_weight > 0:
+                expected_goals = weighted_goals / total_weight
+                btts_prob = (weighted_btts / total_weight) * 100
+            else:
+                expected_goals = 2.5
+                btts_prob = 50
         else:
             expected_goals = 2.5
             btts_prob = 50
         
-        # Calculate base confidence
-        avg_similarity = np.mean([s for s, _ in similar])
-        base_confidence = avg_similarity * 100
+        # ====================================================================
+        # HISTORY-BASED DECISION LOGIC
+        # ====================================================================
         
-        # Apply contradiction penalty
-        penalty = self.calculate_contradiction_penalty(tiers, counter_threats)
-        confidence = max(base_confidence - penalty, 30)  # Can't go below 30%
+        # If we have historical pattern data, USE IT (it's more reliable)
+        if pattern_history and pattern_history['count'] >= 2:
+            return self._history_based_prediction(
+                tiers, pattern_history, expected_goals, btts_prob, similar
+            )
+        
+        # Otherwise fall back to tier-based logic
+        return self._tier_based_prediction(
+            tiers, expected_goals, btts_prob, similar
+        )
+    
+    def _history_based_prediction(self, tiers, history, expected_goals, btts_prob, similar):
+        """Make prediction based on historical pattern data"""
+        
+        # Historical data overrides tier logic
+        home_scores = history['home_scored_pct']
+        away_scores = history['away_scored_pct']
+        btts_pct = history['btts_pct']
+        over_pct = history['over_pct']
+        avg_goals = history['avg_goals']
+        
+        match_type = "📊 HISTORY-BASED"
+        
+        # Determine bet based on historical patterns
+        if btts_pct <= 20 and over_pct <= 20:
+            bet = "✅ UNDER 2.5 & NO BTTS"
+            action = f"HISTORY SAYS: {history['count']} matches - No BTTS, Under 2.5"
+        elif home_scores >= 70 and away_scores <= 30:
+            bet = "🏠 HOME TO SCORE"
+            action = f"HISTORY SAYS: Home scores in {home_scores:.0f}% of matches"
+        elif away_scores >= 70 and home_scores <= 30:
+            bet = "✈️ AWAY TO SCORE"
+            action = f"HISTORY SAYS: Away scores in {away_scores:.0f}% of matches"
+        elif btts_pct >= 70:
+            bet = "⚽ BTTS"
+            action = f"HISTORY SAYS: BTTS in {btts_pct:.0f}% of matches"
+        elif over_pct >= 70:
+            bet = "🔥 OVER 2.5"
+            action = f"HISTORY SAYS: Over 2.5 in {over_pct:.0f}% of matches"
+        elif home_scores <= 20 and away_scores <= 20:
+            bet = "✅ UNDER 2.5 & NO BTTS"
+            action = f"HISTORY SAYS: No goals from either team in most matches"
+        else:
+            bet = "⚖️ NO CLEAR PATTERN"
+            action = f"HISTORY SAYS: Mixed results - {home_scores:.0f}% home score, {away_scores:.0f}% away score"
+        
+        # Calculate confidence based on sample size
+        base_confidence = 70 + (min(history['count'], 10) * 2)
+        
+        # Penalty if history contradicts tier logic
+        tier_home_score = (tiers[2] <= 2)  # Tier 1-2 means should score
+        if tier_home_score and home_scores < 40:
+            base_confidence -= 15  # History says no, tiers say yes - penalty
+        
+        confidence = min(base_confidence, 95)
         
         # Calculate honest score
-        honest_score = self.calculate_honest_score(tiers, counter_threats)
+        score = min(int(avg_goals * 4) + int(btts_pct / 20), 13)
         
-        # ====================================================================
-        # ENHANCED BETTING LOGIC WITH COUNTER THREAT AWARENESS
-        # ====================================================================
+        return {
+            'match_type': match_type,
+            'bet': bet,
+            'action': action,
+            'expected_goals': round(avg_goals, 1),
+            'btts_probability': round(btts_pct, 1),
+            'confidence': round(confidence, 1),
+            'score': score,
+            'max_score': 13,
+            'tier_signature': tiers,
+            'pattern_history': history,
+            'similar_matches': similar[:3]
+        }
+    
+    def _tier_based_prediction(self, tiers, expected_goals, btts_prob, similar):
+        """Fallback tier-based prediction when no history available"""
         
-        match_type = ""
-        bet = ""
-        action = ""
+        # Calculate base confidence
+        avg_similarity = np.mean([s for s, _ in similar]) if similar else 0.5
+        confidence = 50 + (avg_similarity * 30)
         
-        # Check for counter threat warnings first
-        if counter_threats['away'] and tiers[0] <= 2:
-            match_type = "⚠️ COUNTER THREAT WARNING"
-            bet = "🏠 HOME WIN + AWAY GOAL?"
-            action = "Home should dominate, but away team steals goals - consider BTTS"
+        # Simple tier-based logic
+        if (tiers[0] <= 2 and tiers[1] <= 2 and 
+            tiers[2] <= 2 and tiers[3] <= 2 and 
+            tiers[4] <= 2 and tiers[5] <= 2):
             
-        elif counter_threats['home'] and tiers[1] <= 2:
-            match_type = "⚠️ COUNTER THREAT WARNING"
-            bet = "✈️ AWAY WIN + HOME GOAL?"
-            action = "Away should dominate, but home team steals goals - consider BTTS"
+            match_type = "💥 EXPLOSION (TIER)"
+            bet = "🔥 OVER 2.5 & BTTS"
+            action = "All tiers 1-2 suggest goals"
         
-        # PATTERN 1: EXPLOSION - All tiers 1-2
-        elif (tiers[0] <= 2 and tiers[1] <= 2 and 
-              tiers[2] <= 2 and tiers[3] <= 2 and 
-              tiers[4] <= 2 and tiers[5] <= 2):
-            
-            match_type = "💥 EXPLOSION"
-            if expected_goals >= 3.0:
-                bet = "🔥 OVER 2.5 & BTTS"
-                action = "STRONG BET: Over 2.5 and Both Teams to Score"
-            else:
-                bet = "⚽ BTTS"
-                action = "BET: Both Teams to Score"
-        
-        # PATTERN 2: DEFENSIVE LOCK - All tiers 4-5
         elif (tiers[0] >= 4 and tiers[1] >= 4 and 
               tiers[2] >= 4 and tiers[3] >= 4 and 
               tiers[4] >= 4 and tiers[5] >= 4):
             
-            match_type = "🔒 DEFENSIVE LOCK"
-            if not counter_threats['home'] and not counter_threats['away']:
-                if expected_goals <= 2.2:
-                    bet = "✅ UNDER 2.5 & NO BTTS"
-                    action = "STRONG BET: Under 2.5 and No BTTS"
-                else:
-                    bet = "✅ UNDER 2.5"
-                    action = "BET: Under 2.5"
-            else:
-                match_type = "⚠️ DEFENSIVE BUT WATCH"
-                bet = "✅ UNDER 2.5"
-                action = "BET: Under 2.5 - but counter threat could score"
+            match_type = "🔒 DEFENSIVE (TIER)"
+            bet = "✅ UNDER 2.5 & NO BTTS"
+            action = "All tiers 4-5 suggest low scoring"
         
-        # PATTERN 3: MISMATCH - One team much stronger
         elif abs(tiers[0] - tiers[1]) >= 2:
-            match_type = "⚖️ MISMATCH"
+            match_type = "⚖️ MISMATCH (TIER)"
             dominant = "Home" if tiers[0] < tiers[1] else "Away"
-            
-            # Check if underdog is counter threat
-            underdog = "away" if dominant == "Home" else "home"
-            if counter_threats[underdog]:
-                match_type = "⚖️ MISMATCH + COUNTER THREAT"
-                bet = f"🔥 {dominant} TO WIN - BUT {underdog.upper()} MAY SCORE"
-                action = f"BET: {dominant} win, consider BTTS"
-            elif tiers[4] <= 2 or tiers[5] <= 2:
-                bet = f"🔥 {dominant} TO SCORE 2+"
-                action = f"BET: {dominant} team Over 1.5 Team Goals"
-            else:
-                bet = f"⚠️ {dominant} ADVANTAGE"
-                action = f"WATCH: {dominant} team likely to control game"
+            bet = f"{dominant} TO DOMINATE"
+            action = f"{dominant} team has attacking advantage"
         
-        # PATTERN 4: HIGH SCORING
-        elif expected_goals >= 3.0:
-            match_type = "🔥 HIGH SCORING"
-            if btts_prob >= 60:
-                bet = "🔥 OVER 2.5 & BTTS"
-                action = "STRONG BET: Over 2.5 and Both Teams to Score"
-            else:
-                bet = "🔥 OVER 2.5"
-                action = "BET: Over 2.5"
+        elif expected_goals >= 2.8:
+            match_type = "🔥 HIGH SCORING (TIER)"
+            bet = "🔥 OVER 2.5"
+            action = "Tiers suggest goals likely"
         
-        # PATTERN 5: LOW SCORING
         elif expected_goals <= 2.3:
-            match_type = "📊 LOW SCORING"
-            if btts_prob <= 45 and not (counter_threats['home'] or counter_threats['away']):
-                bet = "✅ UNDER 2.5 & NO BTTS"
-                action = "STRONG BET: Under 2.5 and No BTTS"
-            elif counter_threats['home'] or counter_threats['away']:
-                match_type = "📊 LOW SCORING + COUNTER THREAT"
-                bet = "✅ UNDER 2.5"
-                action = "BET: Under 2.5 - but counter threat could spoil clean sheet"
-            else:
-                bet = "✅ UNDER 2.5"
-                action = "BET: Under 2.5"
+            match_type = "📊 LOW SCORING (TIER)"
+            bet = "✅ UNDER 2.5"
+            action = "Tiers suggest low scoring"
         
-        # PATTERN 6: CONTRADICTION
         else:
-            match_type = "🔄 CONTRADICTION"
-            
-            # Check for specific patterns
-            if tiers[2] <= 2 and tiers[3] >= 4:
-                bet = "🏠 HOME TO SCORE"
-                action = "BET: Home team to score"
-            elif tiers[2] >= 4 and tiers[3] <= 2:
-                bet = "✈️ AWAY TO SCORE"
-                action = "BET: Away team to score"
-            elif abs(tiers[4] - tiers[5]) >= 2:
-                high_over_team = "Home" if tiers[4] < tiers[5] else "Away"
-                bet = f"{high_over_team} OVER 0.5 TEAM GOALS"
-                action = f"BET: {high_over_team} team to score"
-            else:
-                bet = "⚖️ NO CLEAR EDGE"
-                action = "AVOID: Stats too contradictory for confident bet"
+            match_type = "🔄 MIXED (TIER)"
+            bet = "⚖️ NO CLEAR EDGE"
+            action = "Tiers contradictory - watch live"
+        
+        # Simple score calculation
+        score = 0
+        for t in tiers:
+            score += (6 - t)
+        score = min(score, 13)
         
         return {
             'match_type': match_type,
@@ -470,85 +393,15 @@ class TierBasedHunter:
             'expected_goals': round(expected_goals, 1),
             'btts_probability': round(btts_prob, 1),
             'confidence': round(confidence, 1),
-            'score': honest_score,
+            'score': score,
             'max_score': 13,
             'tier_signature': tiers,
-            'counter_threats': counter_threats,
-            'penalty_applied': round(penalty, 1),
+            'pattern_history': None,
             'similar_matches': similar[:3]
         }
     
-    def _fallback_prediction(self, tiers, counter_threats):
-        """Fallback when no similar matches found"""
-        
-        honest_score = self.calculate_honest_score(tiers, counter_threats)
-        penalty = self.calculate_contradiction_penalty(tiers, counter_threats)
-        confidence = 50 - penalty
-        
-        if all(t <= 2 for t in tiers):
-            return {
-                'match_type': "🆕 NEW PATTERN - EXPLOSIVE",
-                'bet': "🔥 OVER 2.5",
-                'action': "SPECULATIVE BET: Pattern suggests goals",
-                'expected_goals': 3.0,
-                'btts_probability': 60,
-                'confidence': max(confidence, 30),
-                'score': honest_score,
-                'max_score': 13,
-                'tier_signature': tiers,
-                'counter_threats': counter_threats,
-                'penalty_applied': penalty,
-                'similar_matches': []
-            }
-        elif all(t >= 4 for t in tiers):
-            if counter_threats['home'] or counter_threats['away']:
-                return {
-                    'match_type': "🆕 DEFENSIVE + COUNTER THREAT",
-                    'bet': "✅ UNDER 2.5",
-                    'action': "BET: Under 2.5 - but counter threat may score",
-                    'expected_goals': 2.2,
-                    'btts_probability': 35,
-                    'confidence': max(confidence, 30),
-                    'score': honest_score,
-                    'max_score': 13,
-                    'tier_signature': tiers,
-                    'counter_threats': counter_threats,
-                    'penalty_applied': penalty,
-                    'similar_matches': []
-                }
-            else:
-                return {
-                    'match_type': "🆕 NEW PATTERN - DEFENSIVE",
-                    'bet': "✅ UNDER 2.5",
-                    'action': "SPECULATIVE BET: Pattern suggests low scoring",
-                    'expected_goals': 2.2,
-                    'btts_probability': 35,
-                    'confidence': max(confidence, 30),
-                    'score': honest_score,
-                    'max_score': 13,
-                    'tier_signature': tiers,
-                    'counter_threats': counter_threats,
-                    'penalty_applied': penalty,
-                    'similar_matches': []
-                }
-        else:
-            return {
-                'match_type': "🆕 NEW PATTERN",
-                'bet': "⚖️ NO CLEAR EDGE",
-                'action': "LEARNING MODE: No historical data for this pattern",
-                'expected_goals': 2.6,
-                'btts_probability': 50,
-                'confidence': max(confidence, 30),
-                'score': honest_score,
-                'max_score': 13,
-                'tier_signature': tiers,
-                'counter_threats': counter_threats,
-                'penalty_applied': penalty,
-                'similar_matches': []
-            }
-    
     def learn(self, match_input, actual_goals, actual_btts, home_team, away_team, league="Unknown"):
-        """Add new match to knowledge base and update counter threats"""
+        """Add new match to knowledge base and update pattern history"""
         new_match = {
             'home_da': match_input['home_da'],
             'away_da': match_input['away_da'],
@@ -569,13 +422,11 @@ class TierBasedHunter:
         self.knowledge_base.append(new_match)
         
         # Update clusters
-        sig_data = self._get_tier_signature(match_input, home_team, away_team, league)
-        signature = str(sig_data['tiers'])
+        signature = str(self._get_tier_signature(new_match))
         self.pattern_clusters[signature].append(new_match)
         
-        # Check for counter threats
-        self._detect_counter_threat(home_team, league)
-        self._detect_counter_threat(away_team, league)
+        # Re-analyze pattern history
+        self._analyze_pattern_history()
         
         return len(self.knowledge_base)
 
@@ -596,28 +447,29 @@ def tier_to_emoji(tier, category):
 
 
 # ============================================================================
-# MAIN UI - CLEAN AND SIMPLE
+# MAIN UI
 # ============================================================================
 
 def main():
-    st.title("🎯 Mismatch Hunter v10.0")
-    st.markdown("### Counter Threat Detection & Honest Scoring")
+    st.title("🎯 Mismatch Hunter v11.0")
+    st.markdown("### History-Based Pattern Learning - Trusting What Actually Happened")
     
     # Initialize hunter
     if 'hunter' not in st.session_state:
-        st.session_state.hunter = TierBasedHunter()
+        st.session_state.hunter = PatternLearningHunter()
     
-    # Sidebar - Simple stats
+    # Sidebar
     with st.sidebar:
         st.header("📊 Knowledge")
         st.metric("Patterns", len(st.session_state.hunter.knowledge_base))
         st.metric("Clusters", len(st.session_state.hunter.pattern_clusters))
-        st.metric("Counter Threats", len(st.session_state.hunter.counter_threats))
+        st.metric("Learned Patterns", len(st.session_state.hunter.pattern_history))
         
-        if st.session_state.hunter.counter_threats:
-            st.subheader("⚠️ Counter Threats")
-            for team in list(st.session_state.hunter.counter_threats.keys())[:5]:
-                st.text(f"• {team}")
+        if st.session_state.hunter.pattern_history:
+            st.subheader("📈 Pattern Insights")
+            for sig, data in list(st.session_state.hunter.pattern_history.items())[:3]:
+                st.text(f"{sig}: {data['count']} matches")
+                st.text(f"  BTTS: {data['btts_pct']:.0f}% | Over: {data['over_pct']:.0f}%")
         
         st.markdown("---")
         st.markdown("**Tiers:** 1💥 2⚡ 3📊 4🐢 5🛡️")
@@ -652,7 +504,7 @@ def main():
         
         league = st.text_input("League", "EPL")
         
-        submitted = st.form_submit_button("🎯 GET HONEST BET", use_container_width=True)
+        submitted = st.form_submit_button("🎯 GET HISTORY-BASED PREDICTION", use_container_width=True)
     
     if submitted:
         match_input = {
@@ -669,11 +521,6 @@ def main():
         
         result = st.session_state.hunter.predict(match_input, home_team, away_team, league)
         tiers = result['tier_signature']
-        counter = result['counter_threats']
-        
-        # ====================================================================
-        # CLEAN UI - NO HTML CLUTTER
-        # ====================================================================
         
         st.markdown("---")
         st.subheader(f"🏆 {home_team} vs {away_team}")
@@ -684,23 +531,19 @@ def main():
         tier_cats = ['da', 'da', 'btts', 'btts', 'over', 'over']
         for i, (col, label, cat) in enumerate(zip(cols, tier_labels, tier_cats)):
             emoji = tier_to_emoji(tiers[i], cat)
-            
-            # Add counter threat indicator
-            if (i == 2 and counter['home']) or (i == 3 and counter['away']):
-                col.metric(label, f"{emoji} {tiers[i]}", delta="⚠️")
-            else:
-                col.metric(label, f"{emoji} {tiers[i]}")
+            col.metric(label, f"{emoji} {tiers[i]}")
         
-        # Counter threat warnings
-        if counter['home'] or counter['away']:
-            warning = ""
-            if counter['home']:
-                warning += f"⚠️ {home_team} is a COUNTER THREAT - they score when stats say they shouldn't. "
-            if counter['away']:
-                warning += f"⚠️ {away_team} is a COUNTER THREAT - they score when stats say they shouldn't. "
-            st.warning(warning)
+        # Show pattern history if available
+        if result['pattern_history']:
+            hist = result['pattern_history']
+            st.info(f"📊 **Pattern History ({hist['count']} matches):** "
+                   f"Home scores {hist['home_scored_pct']:.0f}% | "
+                   f"Away scores {hist['away_scored_pct']:.0f}% | "
+                   f"BTTS {hist['btts_pct']:.0f}% | "
+                   f"Over {hist['over_pct']:.0f}% | "
+                   f"Avg {hist['avg_goals']:.1f} goals")
         
-        # MAIN BETTING CALL - BIG AND CLEAR
+        # MAIN BETTING CALL
         confidence_color = "🟢" if result['confidence'] >= 70 else "🟡" if result['confidence'] >= 50 else "🔴"
         
         st.markdown(f"""
@@ -709,36 +552,33 @@ def main():
             <h1 style="text-align: center; font-size: 48px; margin: 10px 0;">{result['bet']}</h1>
             <p style="text-align: center; font-size: 20px;">{result['action']}</p>
             <div style="display: flex; justify-content: center; gap: 30px; margin-top: 20px;">
-                <div><strong>Goals:</strong> {result['expected_goals']}</div>
-                <div><strong>BTTS:</strong> {result['btts_probability']}%</div>
+                <div><strong>Expected Goals:</strong> {result['expected_goals']}</div>
+                <div><strong>BTTS Prob:</strong> {result['btts_probability']}%</div>
                 <div><strong>Confidence:</strong> {confidence_color} {result['confidence']}%</div>
                 <div><strong>Score:</strong> {result['score']}/{result['max_score']}</div>
-                <div><strong>Penalty:</strong> -{result['penalty_applied']}%</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
         
-        # Similar matches (optional - can be hidden)
-        with st.expander("📊 Similar Historical Matches"):
-            if result['similar_matches']:
-                for sim, match in result['similar_matches']:
-                    pct = int(sim * 100)
-                    btts_text = "✅ BTTS" if match['btts'] else "❌ No BTTS"
-                    st.text(f"{match.get('home_team', 'Home')} vs {match.get('away_team', 'Away')} ({match.get('league', 'Unknown')})")
-                    st.text(f"  {pct}% similar • {match['goals']} goals • {btts_text}")
-            else:
-                st.text("No similar matches in database")
+        # Similar matches
+        if result['similar_matches']:
+            st.subheader("📊 Similar Historical Matches")
+            for sim, match in result['similar_matches']:
+                pct = int(sim * 100)
+                btts_text = "✅ BTTS" if match['btts'] else "❌ No BTTS"
+                st.text(f"• {match.get('home_team', 'Home')} vs {match.get('away_team', 'Away')} ({match.get('league', 'Unknown')})")
+                st.text(f"  {pct}% similar • {match['goals']} goals • {btts_text}")
         
         # Learning section
         st.markdown("---")
-        st.subheader("📚 Learning")
+        st.subheader("📚 Teach The System")
         col_l1, col_l2, col_l3 = st.columns(3)
         with col_l1:
             actual = st.number_input("Actual Goals", 0, 10, 1)
         with col_l2:
-            actual_btts = st.checkbox("BTTS Happened?")
+            actual_btts = st.checkbox("BTTS Happened?", value=False)
         with col_l3:
-            if st.button("📥 Teach System"):
+            if st.button("📥 Learn From This Match", use_container_width=True):
                 total = st.session_state.hunter.learn(
                     match_input, 
                     actual, 
@@ -751,9 +591,8 @@ def main():
                 st.balloons()
                 st.rerun()
     
-    # Footer
     st.markdown("---")
-    st.markdown("🎯 **v10.0** - Counter Threat Detection | Honest Scoring | No Fluff")
+    st.markdown("🎯 **v11.0** - History-Based Learning | Trusting Patterns | No Fluff")
 
 
 if __name__ == "__main__":
