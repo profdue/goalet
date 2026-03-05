@@ -1,3 +1,23 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import plotly.graph_objects as go
+import json
+import os
+from collections import defaultdict
+
+# Page config MUST be the first Streamlit command
+st.set_page_config(
+    page_title="Mismatch Hunter v8.0",
+    page_icon="🎯",
+    layout="wide"
+)
+
+# ============================================================================
+# TIER-BASED PATTERN RECOGNITION ENGINE
+# ============================================================================
+
 class TierBasedHunter:
     """
     League-agnostic pattern recognition using TIERS instead of raw numbers
@@ -228,7 +248,7 @@ class TierBasedHunter:
         
         tiers = self._get_tier_signature(match_input)
         
-        # Pattern 1: ELITE ATTACK [1,1,1,1,1,1] or similar
+        # Pattern 1: ELITE ATTACK - all tiers 1-2
         if (tiers[0] <= 2 and tiers[1] <= 2 and 
             tiers[2] <= 2 and tiers[3] <= 2 and 
             tiers[4] <= 2 and tiers[5] <= 2):
@@ -238,7 +258,7 @@ class TierBasedHunter:
                 f"🔥 OVER 2.5 & BTTS ({expected_goals} goals expected)"
             )
         
-        # Pattern 2: DEFENSIVE GRIND [4+,4+,4+,4+,4+,4+]
+        # Pattern 2: DEFENSIVE GRIND - all tiers 4-5
         if (tiers[0] >= 4 and tiers[1] >= 4 and 
             tiers[2] >= 4 and tiers[3] >= 4 and 
             tiers[4] >= 4 and tiers[5] >= 4):
@@ -368,3 +388,250 @@ class TierBasedHunter:
         self.pattern_clusters[signature].append(new_match)
         
         return len(self.knowledge_base)
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def tier_to_emoji(tier, category):
+    """Convert tier to emoji for display"""
+    if category == 'da':
+        emojis = ["💥", "⚡", "📊", "🐢", "🛡️"]
+    elif category == 'btts':
+        emojis = ["🎯", "⚽", "🤔", "🧤", "🚫"]
+    else:  # over
+        emojis = ["🔥", "📈", "⚖️", "📉", "💤"]
+    return emojis[tier-1]
+
+
+# ============================================================================
+# MAIN UI
+# ============================================================================
+
+def main():
+    st.title("🎯 Mismatch Hunter v8.0")
+    st.markdown("### Tier-Based Pattern Recognition - The Universal Football Language")
+    
+    # Initialize hunter in session state
+    if 'hunter' not in st.session_state:
+        st.session_state.hunter = TierBasedHunter()
+    
+    # Sidebar stats
+    with st.sidebar:
+        st.header("📊 Knowledge Base")
+        st.metric("Total Patterns", len(st.session_state.hunter.knowledge_base))
+        st.metric("Unique Tier Patterns", len(st.session_state.hunter.pattern_clusters))
+        
+        # Pattern distribution
+        st.subheader("Tier Pattern Clusters")
+        for sig, matches in list(st.session_state.hunter.pattern_clusters.items())[:5]:
+            st.text(f"{sig}: {len(matches)} matches")
+        
+        st.markdown("---")
+        st.markdown("""
+        **Tier System (1-5):**
+        
+        **DA Tiers:**
+        1️⃣ 💥 Elite (80+)
+        2️⃣ ⚡ Strong (65-79)
+        3️⃣ 📊 Average (50-64)
+        4️⃣ 🐢 Weak (35-49)
+        5️⃣ 🛡️ Defensive (<35)
+        
+        **BTTS Tiers:**
+        1️⃣ 🎯 Always scores (65%+)
+        2️⃣ ⚽ Usually scores (55-64%)
+        3️⃣ 🤔 50/50 (45-54%)
+        4️⃣ 🧤 Usually doesn't (35-44%)
+        5️⃣ 🚫 Never scores (<35%)
+        
+        **Over Tiers:**
+        1️⃣ 🔥 Goal fest (65%+)
+        2️⃣ 📈 Goals likely (55-64%)
+        3️⃣ ⚖️ 50/50 (45-54%)
+        4️⃣ 📉 Goals unlikely (35-44%)
+        5️⃣ 💤 Dead game (<35%)
+        """)
+    
+    # Main input form
+    with st.form("match_input"):
+        st.subheader("📋 Enter Match Data")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("**🏠 HOME TEAM**")
+            home_team = st.text_input("Home Team Name", "Bournemouth")
+            home_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 51)
+            home_btts = st.number_input("BTTS %", 0, 100, 68)
+            home_over = st.number_input("Over 2.5 %", 0, 100, 57)
+        
+        with col2:
+            st.markdown("**✈️ AWAY TEAM**")
+            away_team = st.text_input("Away Team Name", "Brentford")
+            away_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 45, key="away_da")
+            away_btts = st.number_input("BTTS %", 0, 100, 54, key="away_btts")
+            away_over = st.number_input("Over 2.5 %", 0, 100, 50, key="away_over")
+        
+        with col3:
+            st.markdown("**🎯 CONTEXT**")
+            elite = st.checkbox("⭐ Elite Team Present")
+            derby = st.checkbox("🏆 Derby Match")
+            relegation = st.checkbox("⚠️ Relegation Battle")
+            league = st.text_input("League", "EPL")
+        
+        submitted = st.form_submit_button("🎯 GENERATE PREDICTION", use_container_width=True)
+    
+    if submitted:
+        match_input = {
+            'home_da': home_da,
+            'away_da': away_da,
+            'home_btts': home_btts,
+            'away_btts': away_btts,
+            'home_over': home_over,
+            'away_over': away_over,
+            'elite': 1 if elite else 0,
+            'derby': 1 if derby else 0,
+            'relegation': 1 if relegation else 0
+        }
+        
+        # Get prediction
+        result = st.session_state.hunter.predict(match_input)
+        
+        # Display results
+        st.markdown("---")
+        
+        # Show match header
+        st.subheader(f"🏆 {home_team} vs {away_team}")
+        
+        # Show tier signature
+        tiers = result['tier_signature']
+        st.subheader("🎯 Tier Signature")
+        
+        cols = st.columns(6)
+        tier_labels = ['H-DA', 'A-DA', 'H-BTTS', 'A-BTTS', 'H-OVER', 'A-OVER']
+        for i, (col, label) in enumerate(zip(cols, tier_labels)):
+            category = 'da' if i < 2 else 'btts' if i < 4 else 'over'
+            emoji = tier_to_emoji(tiers[i], category)
+            col.metric(label, f"{emoji} {tiers[i]}")
+        
+        # Main prediction card
+        color_map = {
+            '💥 EXPLOSION': '#FF4B4B',
+            '🔒 LOCK UNDER': '#2E7D32',
+            '⚖️ MISMATCH': '#FFA500',
+            '🔥 HIGH SCORING': '#FF6B6B',
+            '📊 LOW SCORING': '#4CAF50',
+            '🔄 HYBRID': '#808080',
+            '🎢 AUSTRIAN SPECIAL': '#9C27B0',
+            '🆕': '#2196F3'
+        }
+        
+        match_type_key = result['match_type'].split()[0]
+        if match_type_key == '🆕':
+            match_type_key = result['match_type'].split()[1] if len(result['match_type'].split()) > 1 else '🔄'
+        bg_color = color_map.get(match_type_key, '#F0F0F0')
+        
+        st.markdown(f"""
+        <div style="background-color: {bg_color}20; padding: 30px; border-radius: 15px; border: 3px solid {bg_color};">
+            <h1 style="text-align: center; margin: 0; font-size: 48px;">{result['match_type']}</h1>
+            <h2 style="text-align: center; margin: 10px 0; font-size: 32px;">{result['prediction']}</h2>
+            
+            <div style="display: flex; justify-content: center; gap: 50px; margin: 30px 0;">
+                <div style="text-align: center;">
+                    <p style="font-size: 18px; margin: 0;">Expected Goals</p>
+                    <p style="font-size: 42px; font-weight: bold; margin: 0;">{result['expected_goals']}</p>
+                </div>
+                <div style="text-align: center;">
+                    <p style="font-size: 18px; margin: 0;">BTTS Probability</p>
+                    <p style="font-size: 42px; font-weight: bold; margin: 0;">{result['btts_probability']}%</p>
+                </div>
+                <div style="text-align: center;">
+                    <p style="font-size: 18px; margin: 0;">Confidence</p>
+                    <p style="font-size: 42px; font-weight: bold; margin: 0;">{result['confidence']}%</p>
+                </div>
+            </div>
+            
+            <div style="display: flex; justify-content: center; margin: 20px 0;">
+                <div style="background-color: white; padding: 15px 30px; border-radius: 10px;">
+                    <p style="font-size: 24px; font-weight: bold; margin: 0;">{result['action']}</p>
+                </div>
+            </div>
+            
+            <div style="display: flex; justify-content: space-between; margin-top: 20px;">
+                <div><strong>Explosion Score:</strong> {result['score']}/{result['max_score']}</div>
+                <div><strong>Pattern Similarity:</strong> {result['avg_similarity']}%</div>
+                <div><strong>Similar Matches:</strong> {result['sample_size']}</div>
+                <div><strong>Primary League:</strong> {result['primary_league']}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Similar matches
+        if result['similar_matches']:
+            st.subheader("📊 Similar Historical Patterns")
+            
+            cols = st.columns(3)
+            for i, (sim, match) in enumerate(result['similar_matches']):
+                with cols[i]:
+                    similarity_pct = int(sim * 100)
+                    match_tiers = st.session_state.hunter._get_tier_signature(match)
+                    tier_str = f"[{match_tiers[0]},{match_tiers[1]},{match_tiers[2]},{match_tiers[3]},{match_tiers[4]},{match_tiers[5]}]"
+                    btts_text = "✅ BTTS" if match['btts'] else "❌ No BTTS"
+                    
+                    st.markdown(f"""
+                    <div style="border: 1px solid #ddd; border-radius: 10px; padding: 15px;">
+                        <h4 style="margin: 0 0 10px 0;">{match.get('home_team', 'Home')} vs {match.get('away_team', 'Away')}</h4>
+                        <p style="font-size: 14px; color: #666;">{similarity_pct}% Similar | {match.get('league', 'Unknown')}</p>
+                        <p><strong>Tiers:</strong> {tier_str}</p>
+                        <p>DA: {match['home_da']}/{match['away_da']}</p>
+                        <p>BTTS: {match['home_btts']}%/{match['away_btts']}%</p>
+                        <p>Over: {match['home_over']}%/{match['away_over']}%</p>
+                        <p style="font-size: 20px; font-weight: bold; margin: 10px 0 0 0;">
+                            {match['goals']} goals - {btts_text}
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        # Learning section
+        st.markdown("---")
+        st.subheader("📚 Teach The System")
+        
+        col_l1, col_l2, col_l3, col_l4 = st.columns([2, 1, 2, 2])
+        
+        with col_l1:
+            actual_goals = st.number_input("Actual Goals", 0, 10, 2)
+        
+        with col_l2:
+            actual_btts = st.checkbox("BTTS Happened?", value=True)
+        
+        with col_l3:
+            league_name = st.text_input("League for learning", league)
+        
+        with col_l4:
+            if st.button("📥 Learn From This Match", use_container_width=True):
+                total = st.session_state.hunter.learn(
+                    match_input, 
+                    actual_goals, 
+                    1 if actual_btts else 0,
+                    home_team,
+                    away_team,
+                    league_name
+                )
+                st.success(f"✅ Match added to knowledge base! Total patterns: {total}")
+                st.balloons()
+                st.rerun()
+    
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; color: #666;">
+        <p>🎯 <strong>Mismatch Hunter v8.0</strong> - Tier-Based Pattern Recognition</p>
+        <p>Converting raw numbers to football meaning • Learning league-specific adjustments • Universal logic</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+if __name__ == "__main__":
+    main()
