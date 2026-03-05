@@ -2,14 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import plotly.graph_objects as go
-import json
-import os
 from collections import defaultdict
 
 # Page config MUST be the first Streamlit command
 st.set_page_config(
-    page_title="Mismatch Hunter v8.0",
+    page_title="Mismatch Hunter v9.0",
     page_icon="🎯",
     layout="wide"
 )
@@ -27,7 +24,6 @@ class TierBasedHunter:
     def __init__(self):
         self.knowledge_base = self._initialize_knowledge()
         self.pattern_clusters = defaultdict(list)
-        self.league_adjustments = defaultdict(lambda: 0.0)
         self._build_initial_clusters()
     
     def _da_tier(self, da):
@@ -68,31 +64,31 @@ class TierBasedHunter:
     def _initialize_knowledge(self):
         """Initialize with tier-based knowledge"""
         return [
-            # PATTERN 1: [1,2,2,2,1,1] - ELITE ATTACK (Bundesliga style)
+            # PATTERN 1: [1,2,2,2,1,1] - ELITE ATTACK
             {'home_da': 82, 'away_da': 78, 'home_btts': 62, 'away_btts': 62,
              'home_over': 65, 'away_over': 65, 'elite': 1, 'derby': 0, 'relegation': 0,
              'goals': 3.2, 'btts': 1, 'league': 'Bundesliga', 
              'home_team': 'Bayern', 'away_team': 'Dortmund'},
             
-            # PATTERN 2: [2,2,2,2,2,3] - STRONG BOTH (EPL top 4)
+            # PATTERN 2: [2,2,2,2,2,3] - STRONG BOTH
             {'home_da': 76, 'away_da': 72, 'home_btts': 58, 'away_btts': 56,
              'home_over': 56, 'away_over': 54, 'elite': 1, 'derby': 0, 'relegation': 0,
              'goals': 2.9, 'btts': 1, 'league': 'EPL',
              'home_team': 'Liverpool', 'away_team': 'Arsenal'},
             
-            # PATTERN 3: [3,3,3,3,3,3] - MIDTABLE MEDIOCRITY
+            # PATTERN 3: [3,3,3,3,3,3] - MIDTABLE
             {'home_da': 55, 'away_da': 52, 'home_btts': 52, 'away_btts': 50,
              'home_over': 52, 'away_over': 50, 'elite': 0, 'derby': 0, 'relegation': 0,
              'goals': 2.6, 'btts': 0, 'league': 'La Liga',
              'home_team': 'Valencia', 'away_team': 'Real Sociedad'},
             
-            # PATTERN 4: [4,4,4,4,4,4] - WEAK BOTH (Relegation battle)
+            # PATTERN 4: [4,4,4,4,4,4] - WEAK BOTH
             {'home_da': 42, 'away_da': 40, 'home_btts': 42, 'away_btts': 40,
              'home_over': 40, 'away_over': 38, 'elite': 0, 'derby': 0, 'relegation': 1,
              'goals': 2.2, 'btts': 0, 'league': 'Serie A',
              'home_team': 'Lecce', 'away_team': 'Salernitana'},
             
-            # PATTERN 5: [5,5,5,5,5,5] - DEFENSIVE GRIND
+            # PATTERN 5: [5,5,5,5,5,5] - DEFENSIVE
             {'home_da': 32, 'away_da': 30, 'home_btts': 32, 'away_btts': 30,
              'home_over': 30, 'away_over': 28, 'elite': 0, 'derby': 0, 'relegation': 1,
              'goals': 1.8, 'btts': 0, 'league': 'Serie A',
@@ -110,13 +106,13 @@ class TierBasedHunter:
              'goals': 3.1, 'btts': 1, 'league': 'Bundesliga',
              'home_team': 'Paderborn', 'away_team': 'Bayern'},
             
-            # PATTERN 8: [4,4,5,1,4,3] - AUSTRIAN SPECIAL (Home weak attack, away always scores)
+            # PATTERN 8: [4,4,5,1,4,3] - AUSTRIAN SPECIAL
             {'home_da': 38, 'away_da': 37, 'home_btts': 35, 'away_btts': 65,
              'home_over': 40, 'away_over': 45, 'elite': 0, 'derby': 0, 'relegation': 1,
              'goals': 3.8, 'btts': 1, 'league': 'Austria',
              'home_team': 'Blau Weiss', 'away_team': 'WSG Tirol'},
             
-            # PATTERN 9: [2,2,1,3,2,3] - MIXED ATTACK (Common)
+            # PATTERN 9: [2,2,1,3,2,3] - MIXED ATTACK
             {'home_da': 68, 'away_da': 65, 'home_btts': 68, 'away_btts': 48,
              'home_over': 62, 'away_over': 48, 'elite': 0, 'derby': 0, 'relegation': 0,
              'goals': 2.8, 'btts': 1, 'league': 'EPL',
@@ -149,38 +145,29 @@ class TierBasedHunter:
         # If no exact match, find closest by tier difference
         similarities = []
         for sig, matches in self.pattern_clusters.items():
-            # Parse signature back to list
             try:
                 sig_tiers = [int(x.strip()) for x in sig.strip('[]').split(',')]
             except:
                 continue
             
-            # Ensure we have 6 tiers
             if len(sig_tiers) != 6:
                 continue
             
-            # Calculate tier difference (lower = more similar)
             diff = 0
             for a, b in zip(input_tiers, sig_tiers):
                 diff += abs(a - b)
             
-            # Convert diff to similarity (0 diff = 1.0, max diff 24 = 0.0)
             similarity = max(0, 1 - (diff / 24))
             
             for match in matches:
-                # Add index as tiebreaker to avoid comparing dicts
                 similarities.append((similarity, len(similarities), match))
         
-        # Sort by similarity first, then by index
         similarities.sort(reverse=True)
-        
-        # Return without the index
         return [(sim, match) for sim, _, match in similarities[:k]]
     
     def predict(self, match_input):
         """Generate prediction based on tier patterns"""
         
-        # Find similar matches
         similar = self.find_similar_matches(match_input)
         
         if not similar:
@@ -190,14 +177,12 @@ class TierBasedHunter:
         total_weight = 0
         weighted_goals = 0
         weighted_btts = 0
-        league_counts = defaultdict(int)
         
         for sim, match in similar:
             weight = sim ** 2
             total_weight += weight
             weighted_goals += weight * match['goals']
             weighted_btts += weight * match['btts']
-            league_counts[match.get('league', 'Unknown')] += 1
         
         if total_weight > 0:
             expected_goals = weighted_goals / total_weight
@@ -206,188 +191,181 @@ class TierBasedHunter:
             expected_goals = 2.5
             btts_prob = 50
         
-        # Get most common league in similar matches
-        primary_league = max(league_counts, key=league_counts.get) if league_counts else "Unknown"
-        
         # Calculate confidence
         avg_similarity = np.mean([s for s, _ in similar])
-        sample_size = len(similar)
-        
-        confidence = (avg_similarity * 0.5 + min(sample_size / 10, 0.3)) * 100
-        confidence = min(confidence + 20, 95)  # Base confidence
-        
-        # Determine match type and action
-        match_type, action, prediction = self._classify_match(
-            match_input, expected_goals, btts_prob, primary_league
-        )
-        
-        # Calculate explosion score
-        score = self._calculate_score(match_input)
+        confidence = min(avg_similarity * 100, 95)
         
         # Get tier signature
-        tier_signature = self._get_tier_signature(match_input)
-        
-        return {
-            'expected_goals': round(expected_goals, 1),
-            'btts_probability': round(btts_prob, 1),
-            'confidence': round(confidence, 1),
-            'match_type': match_type,
-            'action': action,
-            'prediction': prediction,
-            'score': score,
-            'max_score': 13,
-            'similar_matches': similar[:3],
-            'avg_similarity': round(avg_similarity * 100, 1),
-            'sample_size': sample_size,
-            'tier_signature': tier_signature,
-            'primary_league': primary_league
-        }
-    
-    def _classify_match(self, match_input, expected_goals, btts_prob, primary_league):
-        """Classify match type based on tiers and expected outcomes"""
-        
         tiers = self._get_tier_signature(match_input)
         
-        # Pattern 1: ELITE ATTACK - all tiers 1-2
+        # ====================================================================
+        # CLEAN BETTING LOGIC - NO "WATCH FIRST 30 MINS"
+        # ====================================================================
+        
+        # PATTERN 1: EXPLOSION - All tiers 1-2
         if (tiers[0] <= 2 and tiers[1] <= 2 and 
             tiers[2] <= 2 and tiers[3] <= 2 and 
             tiers[4] <= 2 and tiers[5] <= 2):
-            return (
-                "💥 EXPLOSION",
-                "STRONG Over 2.5 and BTTS",
-                f"🔥 OVER 2.5 & BTTS ({expected_goals} goals expected)"
-            )
+            
+            match_type = "💥 EXPLOSION"
+            if expected_goals >= 3.0:
+                bet = "🔥 OVER 2.5 & BTTS"
+                action = "STRONG BET: Over 2.5 and Both Teams to Score"
+            else:
+                bet = "⚽ BTTS"
+                action = "BET: Both Teams to Score"
         
-        # Pattern 2: DEFENSIVE GRIND - all tiers 4-5
-        if (tiers[0] >= 4 and tiers[1] >= 4 and 
-            tiers[2] >= 4 and tiers[3] >= 4 and 
-            tiers[4] >= 4 and tiers[5] >= 4):
-            return (
-                "🔒 LOCK UNDER",
-                "STRONG Under 2.5, likely no BTTS",
-                f"✅ UNDER 2.5 ({expected_goals} goals expected)"
-            )
+        # PATTERN 2: DEFENSIVE LOCK - All tiers 4-5
+        elif (tiers[0] >= 4 and tiers[1] >= 4 and 
+              tiers[2] >= 4 and tiers[3] >= 4 and 
+              tiers[4] >= 4 and tiers[5] >= 4):
+            
+            match_type = "🔒 DEFENSIVE LOCK"
+            if expected_goals <= 2.2:
+                bet = "✅ UNDER 2.5 & NO BTTS"
+                action = "STRONG BET: Under 2.5 and No BTTS"
+            else:
+                bet = "✅ UNDER 2.5"
+                action = "BET: Under 2.5"
         
-        # Pattern 3: MISMATCH (one team much stronger in DA)
-        if abs(tiers[0] - tiers[1]) >= 2:
+        # PATTERN 3: MISMATCH - One team much stronger
+        elif abs(tiers[0] - tiers[1]) >= 2:
+            match_type = "⚖️ MISMATCH"
             dominant = "Home" if tiers[0] < tiers[1] else "Away"
-            return (
-                "⚖️ MISMATCH",
-                f"{dominant} team likely to dominate, watch live",
-                f"⚠️ {dominant} advantage, but goals uncertain"
-            )
+            
+            if tiers[4] <= 2 or tiers[5] <= 2:  # One team has high Over
+                bet = f"🔥 {dominant} TO SCORE 2+"
+                action = f"BET: {dominant} team Over 1.5 Team Goals"
+            else:
+                bet = f"⚠️ {dominant} ADVANTAGE"
+                action = f"WATCH: {dominant} team likely to control game"
         
-        # Pattern 4: AUSTRIAN SPECIAL [4,4,5,1,4,3]
-        if (tiers[0] == 4 and tiers[1] == 4 and tiers[2] == 5 and 
-            tiers[3] == 1 and tiers[4] == 4 and tiers[5] == 3):
-            return (
-                "🎢 AUSTRIAN SPECIAL",
-                "CHAOS MATCH - Away always scores, home might surprise",
-                f"⚽ BTTS likely, goals expected ({expected_goals})"
-            )
+        # PATTERN 4: HIGH SCORING
+        elif expected_goals >= 3.0:
+            match_type = "🔥 HIGH SCORING"
+            if btts_prob >= 60:
+                bet = "🔥 OVER 2.5 & BTTS"
+                action = "STRONG BET: Over 2.5 and Both Teams to Score"
+            else:
+                bet = "🔥 OVER 2.5"
+                action = "BET: Over 2.5"
         
-        # Based on expected goals
-        if expected_goals >= 3.0:
-            return (
-                "🔥 HIGH SCORING",
-                "Goals likely, consider Over 2.5",
-                f"⚽ Over 2.5 lean ({expected_goals} goals)"
-            )
+        # PATTERN 5: LOW SCORING
         elif expected_goals <= 2.3:
-            return (
-                "📊 LOW SCORING",
-                "Under 2.5 looks good",
-                f"✅ Under 2.5 lean ({expected_goals} goals)"
-            )
+            match_type = "📊 LOW SCORING"
+            if btts_prob <= 45:
+                bet = "✅ UNDER 2.5 & NO BTTS"
+                action = "STRONG BET: Under 2.5 and No BTTS"
+            else:
+                bet = "✅ UNDER 2.5"
+                action = "BET: Under 2.5"
+        
+        # PATTERN 6: CONTRADICTION - Stats don't align
+        elif (tiers[4] <= 2 and tiers[5] >= 3) or (tiers[4] >= 3 and tiers[5] <= 2):
+            match_type = "⚠️ CONTRADICTION"
+            
+            # One team high Over, other low Over
+            if tiers[4] <= 2:  # Home high Over
+                bet = "🏠 HOME TEAM TO SCORE"
+                action = "BET: Home team Over 0.5 Team Goals"
+            elif tiers[5] <= 2:  # Away high Over
+                bet = "✈️ AWAY TEAM TO SCORE"
+                action = "BET: Away team Over 0.5 Team Goals"
+            else:
+                bet = "⚽ BTTS POSSIBLE"
+                action = "CONTRADICTION: Stats conflict - consider BTTS"
+        
+        # PATTERN 7: AUSTRIAN SPECIAL
+        elif (tiers[0] == 4 and tiers[1] == 4 and tiers[2] == 5 and 
+              tiers[3] == 1 and tiers[4] == 4 and tiers[5] == 3):
+            
+            match_type = "🎢 AUSTRIAN SPECIAL"
+            bet = "⚽ AWAY TEAM TO SCORE"
+            action = "BET: Away team to score (85% historical)"
+        
+        # PATTERN 8: DEFAULT - Balanced
         else:
-            return (
-                "🔄 HYBRID",
-                "Watch live - 50/50 match",
-                "⚖️ No strong lean, watch first 30 mins"
-            )
-    
-    def _calculate_score(self, match_input):
-        """Calculate explosion score (0-13)"""
+            match_type = "🔄 BALANCED"
+            if btts_prob >= 55:
+                bet = "⚽ BTTS"
+                action = "BET: Both Teams to Score"
+            elif btts_prob <= 45:
+                bet = "🚫 NO BTTS"
+                action = "BET: No Both Teams to Score"
+            else:
+                bet = "⚖️ NO CLEAR EDGE"
+                action = "AVOID: Stats too balanced for confident bet"
+        
+        # Calculate score (simplified - not 13/13 for everything!)
         score = 0
-        tiers = self._get_tier_signature(match_input)
+        score += (6 - tiers[0]) + (6 - tiers[1])  # DA
+        score += (6 - tiers[2]) + (6 - tiers[3])  # BTTS
+        score += (6 - tiers[4]) + (6 - tiers[5])  # Over
+        score = min(score, 13)
         
-        # Score based on tiers (lower tiers = higher score)
-        score += (6 - tiers[0])  # Home DA
-        score += (6 - tiers[1])  # Away DA
-        score += (6 - tiers[2])  # Home BTTS
-        score += (6 - tiers[3])  # Away BTTS
-        score += (6 - tiers[4])  # Home Over
-        score += (6 - tiers[5])  # Away Over
-        
-        # Context
-        score += match_input.get('elite', 0) * 2
-        score += match_input.get('derby', 0) * 1
-        score += match_input.get('relegation', 0) * 1
-        
-        return min(score, 13)
+        return {
+            'match_type': match_type,
+            'bet': bet,
+            'action': action,
+            'expected_goals': round(expected_goals, 1),
+            'btts_probability': round(btts_prob, 1),
+            'confidence': round(confidence, 1),
+            'score': score,
+            'max_score': 13,
+            'tier_signature': tiers,
+            'similar_matches': similar[:3]
+        }
     
     def _fallback_prediction(self, match_input):
         """Fallback when no similar matches found"""
         tiers = self._get_tier_signature(match_input)
         
-        # Simple rule-based fallback
         if all(t <= 2 for t in tiers):
-            expected_goals = 3.2
-            btts_prob = 65
+            return {
+                'match_type': "🆕 NEW PATTERN - EXPLOSIVE",
+                'bet': "🔥 OVER 2.5",
+                'action': "SPECULATIVE BET: Pattern suggests goals",
+                'expected_goals': 3.0,
+                'btts_probability': 60,
+                'confidence': 50,
+                'score': self._calculate_simple_score(tiers),
+                'max_score': 13,
+                'tier_signature': tiers,
+                'similar_matches': []
+            }
         elif all(t >= 4 for t in tiers):
-            expected_goals = 2.0
-            btts_prob = 35
+            return {
+                'match_type': "🆕 NEW PATTERN - DEFENSIVE",
+                'bet': "✅ UNDER 2.5",
+                'action': "SPECULATIVE BET: Pattern suggests low scoring",
+                'expected_goals': 2.2,
+                'btts_probability': 35,
+                'confidence': 50,
+                'score': self._calculate_simple_score(tiers),
+                'max_score': 13,
+                'tier_signature': tiers,
+                'similar_matches': []
+            }
         else:
-            expected_goals = 2.6
-            btts_prob = 50
-        
-        match_type, action, prediction = self._classify_match(
-            match_input, expected_goals, btts_prob, "Unknown"
-        )
-        
-        return {
-            'expected_goals': round(expected_goals, 1),
-            'btts_probability': round(btts_prob, 1),
-            'confidence': 50,
-            'match_type': "🆕 " + match_type,
-            'action': action,
-            'prediction': prediction,
-            'score': self._calculate_score(match_input),
-            'max_score': 13,
-            'similar_matches': [],
-            'avg_similarity': 0,
-            'sample_size': 0,
-            'tier_signature': tiers,
-            'primary_league': "New Pattern",
-            'note': "🆕 New tier pattern - learning from this match"
-        }
+            return {
+                'match_type': "🆕 NEW PATTERN",
+                'bet': "⚖️ NO CLEAR EDGE",
+                'action': "LEARNING MODE: No historical data for this pattern",
+                'expected_goals': 2.6,
+                'btts_probability': 50,
+                'confidence': 40,
+                'score': self._calculate_simple_score(tiers),
+                'max_score': 13,
+                'tier_signature': tiers,
+                'similar_matches': []
+            }
     
-    def learn(self, match_input, actual_goals, actual_btts, home_team, away_team, league="Unknown"):
-        """Add new match to knowledge base"""
-        new_match = {
-            'home_da': match_input['home_da'],
-            'away_da': match_input['away_da'],
-            'home_btts': match_input['home_btts'],
-            'away_btts': match_input['away_btts'],
-            'home_over': match_input['home_over'],
-            'away_over': match_input['away_over'],
-            'elite': match_input.get('elite', 0),
-            'derby': match_input.get('derby', 0),
-            'relegation': match_input.get('relegation', 0),
-            'goals': actual_goals,
-            'btts': actual_btts,
-            'league': league,
-            'home_team': home_team,
-            'away_team': away_team
-        }
-        
-        self.knowledge_base.append(new_match)
-        
-        # Update clusters
-        signature = str(self._get_tier_signature(new_match))
-        self.pattern_clusters[signature].append(new_match)
-        
-        return len(self.knowledge_base)
+    def _calculate_simple_score(self, tiers):
+        """Simple score calculation for fallback"""
+        score = 0
+        for t in tiers:
+            score += (6 - t)
+        return min(score, 13)
 
 
 # ============================================================================
@@ -406,82 +384,55 @@ def tier_to_emoji(tier, category):
 
 
 # ============================================================================
-# MAIN UI
+# MAIN UI - CLEAN AND SIMPLE
 # ============================================================================
 
 def main():
-    st.title("🎯 Mismatch Hunter v8.0")
-    st.markdown("### Tier-Based Pattern Recognition - The Universal Football Language")
+    st.title("🎯 Mismatch Hunter v9.0")
+    st.markdown("### Pure Betting Logic - No Fluff")
     
-    # Initialize hunter in session state
+    # Initialize hunter
     if 'hunter' not in st.session_state:
         st.session_state.hunter = TierBasedHunter()
     
-    # Sidebar stats
+    # Sidebar - Simple stats
     with st.sidebar:
-        st.header("📊 Knowledge Base")
-        st.metric("Total Patterns", len(st.session_state.hunter.knowledge_base))
-        st.metric("Unique Tier Patterns", len(st.session_state.hunter.pattern_clusters))
-        
-        # Pattern distribution
-        st.subheader("Tier Pattern Clusters")
-        for sig, matches in list(st.session_state.hunter.pattern_clusters.items())[:5]:
-            st.text(f"{sig}: {len(matches)} matches")
+        st.header("📊 Knowledge")
+        st.metric("Patterns", len(st.session_state.hunter.knowledge_base))
+        st.metric("Clusters", len(st.session_state.hunter.pattern_clusters))
         
         st.markdown("---")
-        st.markdown("""
-        **Tier System (1-5):**
-        
-        **DA Tiers:**
-        1️⃣ 💥 Elite (80+)
-        2️⃣ ⚡ Strong (65-79)
-        3️⃣ 📊 Average (50-64)
-        4️⃣ 🐢 Weak (35-49)
-        5️⃣ 🛡️ Defensive (<35)
-        
-        **BTTS Tiers:**
-        1️⃣ 🎯 Always scores (65%+)
-        2️⃣ ⚽ Usually scores (55-64%)
-        3️⃣ 🤔 50/50 (45-54%)
-        4️⃣ 🧤 Usually doesn't (35-44%)
-        5️⃣ 🚫 Never scores (<35%)
-        
-        **Over Tiers:**
-        1️⃣ 🔥 Goal fest (65%+)
-        2️⃣ 📈 Goals likely (55-64%)
-        3️⃣ ⚖️ 50/50 (45-54%)
-        4️⃣ 📉 Goals unlikely (35-44%)
-        5️⃣ 💤 Dead game (<35%)
-        """)
+        st.markdown("**Tiers:** 1💥 2⚡ 3📊 4🐢 5🛡️")
     
     # Main input form
     with st.form("match_input"):
-        st.subheader("📋 Enter Match Data")
+        st.subheader("📋 Match Data")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("**🏠 HOME TEAM**")
-            home_team = st.text_input("Home Team Name", "Bournemouth")
-            home_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 51)
-            home_btts = st.number_input("BTTS %", 0, 100, 68)
-            home_over = st.number_input("Over 2.5 %", 0, 100, 57)
+            st.markdown("**🏠 HOME**")
+            home_team = st.text_input("Home Team", "Brighton")
+            home_da = st.number_input("DA", 0, 100, 52)
+            home_btts = st.number_input("BTTS %", 0, 100, 64)
+            home_over = st.number_input("Over %", 0, 100, 46)
         
         with col2:
-            st.markdown("**✈️ AWAY TEAM**")
-            away_team = st.text_input("Away Team Name", "Brentford")
-            away_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 45, key="away_da")
-            away_btts = st.number_input("BTTS %", 0, 100, 54, key="away_btts")
-            away_over = st.number_input("Over 2.5 %", 0, 100, 50, key="away_over")
+            st.markdown("**✈️ AWAY**")
+            away_team = st.text_input("Away Team", "Arsenal")
+            away_da = st.number_input("DA", 0, 100, 62, key="away_da")
+            away_btts = st.number_input("BTTS %", 0, 100, 52, key="away_btts")
+            away_over = st.number_input("Over %", 0, 100, 55, key="away_over")
         
+        col3, col4, col5 = st.columns(3)
         with col3:
-            st.markdown("**🎯 CONTEXT**")
-            elite = st.checkbox("⭐ Elite Team Present")
-            derby = st.checkbox("🏆 Derby Match")
-            relegation = st.checkbox("⚠️ Relegation Battle")
-            league = st.text_input("League", "EPL")
+            elite = st.checkbox("⭐ Elite")
+        with col4:
+            derby = st.checkbox("🏆 Derby")
+        with col5:
+            relegation = st.checkbox("⚠️ Relegation")
         
-        submitted = st.form_submit_button("🎯 GENERATE PREDICTION", use_container_width=True)
+        submitted = st.form_submit_button("🎯 GET BET", use_container_width=True)
     
     if submitted:
         match_input = {
@@ -496,141 +447,63 @@ def main():
             'relegation': 1 if relegation else 0
         }
         
-        # Get prediction
         result = st.session_state.hunter.predict(match_input)
+        tiers = result['tier_signature']
         
-        # Display results
+        # ====================================================================
+        # CLEAN UI - NO HTML CLUTTER
+        # ====================================================================
+        
         st.markdown("---")
-        
-        # Show match header
         st.subheader(f"🏆 {home_team} vs {away_team}")
         
-        # Show tier signature
-        tiers = result['tier_signature']
-        st.subheader("🎯 Tier Signature")
-        
+        # Tier signature row
         cols = st.columns(6)
         tier_labels = ['H-DA', 'A-DA', 'H-BTTS', 'A-BTTS', 'H-OVER', 'A-OVER']
-        for i, (col, label) in enumerate(zip(cols, tier_labels)):
-            category = 'da' if i < 2 else 'btts' if i < 4 else 'over'
-            emoji = tier_to_emoji(tiers[i], category)
+        tier_cats = ['da', 'da', 'btts', 'btts', 'over', 'over']
+        for i, (col, label, cat) in enumerate(zip(cols, tier_labels, tier_cats)):
+            emoji = tier_to_emoji(tiers[i], cat)
             col.metric(label, f"{emoji} {tiers[i]}")
         
-        # Main prediction card
-        color_map = {
-            '💥 EXPLOSION': '#FF4B4B',
-            '🔒 LOCK UNDER': '#2E7D32',
-            '⚖️ MISMATCH': '#FFA500',
-            '🔥 HIGH SCORING': '#FF6B6B',
-            '📊 LOW SCORING': '#4CAF50',
-            '🔄 HYBRID': '#808080',
-            '🎢 AUSTRIAN SPECIAL': '#9C27B0',
-            '🆕': '#2196F3'
-        }
-        
-        match_type_key = result['match_type'].split()[0]
-        if match_type_key == '🆕':
-            match_type_key = result['match_type'].split()[1] if len(result['match_type'].split()) > 1 else '🔄'
-        bg_color = color_map.get(match_type_key, '#F0F0F0')
-        
+        # MAIN BETTING CALL - BIG AND CLEAR
         st.markdown(f"""
-        <div style="background-color: {bg_color}20; padding: 30px; border-radius: 15px; border: 3px solid {bg_color};">
-            <h1 style="text-align: center; margin: 0; font-size: 48px;">{result['match_type']}</h1>
-            <h2 style="text-align: center; margin: 10px 0; font-size: 32px;">{result['prediction']}</h2>
-            
-            <div style="display: flex; justify-content: center; gap: 50px; margin: 30px 0;">
-                <div style="text-align: center;">
-                    <p style="font-size: 18px; margin: 0;">Expected Goals</p>
-                    <p style="font-size: 42px; font-weight: bold; margin: 0;">{result['expected_goals']}</p>
-                </div>
-                <div style="text-align: center;">
-                    <p style="font-size: 18px; margin: 0;">BTTS Probability</p>
-                    <p style="font-size: 42px; font-weight: bold; margin: 0;">{result['btts_probability']}%</p>
-                </div>
-                <div style="text-align: center;">
-                    <p style="font-size: 18px; margin: 0;">Confidence</p>
-                    <p style="font-size: 42px; font-weight: bold; margin: 0;">{result['confidence']}%</p>
-                </div>
-            </div>
-            
-            <div style="display: flex; justify-content: center; margin: 20px 0;">
-                <div style="background-color: white; padding: 15px 30px; border-radius: 10px;">
-                    <p style="font-size: 24px; font-weight: bold; margin: 0;">{result['action']}</p>
-                </div>
-            </div>
-            
-            <div style="display: flex; justify-content: space-between; margin-top: 20px;">
-                <div><strong>Explosion Score:</strong> {result['score']}/{result['max_score']}</div>
-                <div><strong>Pattern Similarity:</strong> {result['avg_similarity']}%</div>
-                <div><strong>Similar Matches:</strong> {result['sample_size']}</div>
-                <div><strong>Primary League:</strong> {result['primary_league']}</div>
+        <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin: 20px 0;">
+            <h2 style="text-align: center; color: #1f1f1f;">{result['match_type']}</h2>
+            <h1 style="text-align: center; font-size: 48px; margin: 10px 0;">{result['bet']}</h1>
+            <p style="text-align: center; font-size: 20px;">{result['action']}</p>
+            <div style="display: flex; justify-content: center; gap: 30px; margin-top: 20px;">
+                <div><strong>Goals:</strong> {result['expected_goals']}</div>
+                <div><strong>BTTS:</strong> {result['btts_probability']}%</div>
+                <div><strong>Confidence:</strong> {result['confidence']}%</div>
+                <div><strong>Score:</strong> {result['score']}/{result['max_score']}</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
         
-        # Similar matches
-        if result['similar_matches']:
-            st.subheader("📊 Similar Historical Patterns")
-            
-            cols = st.columns(3)
-            for i, (sim, match) in enumerate(result['similar_matches']):
-                with cols[i]:
-                    similarity_pct = int(sim * 100)
-                    match_tiers = st.session_state.hunter._get_tier_signature(match)
-                    tier_str = f"[{match_tiers[0]},{match_tiers[1]},{match_tiers[2]},{match_tiers[3]},{match_tiers[4]},{match_tiers[5]}]"
+        # Similar matches (optional - can be hidden)
+        with st.expander("📊 Similar Historical Matches"):
+            if result['similar_matches']:
+                for sim, match in result['similar_matches']:
+                    pct = int(sim * 100)
                     btts_text = "✅ BTTS" if match['btts'] else "❌ No BTTS"
-                    
-                    st.markdown(f"""
-                    <div style="border: 1px solid #ddd; border-radius: 10px; padding: 15px;">
-                        <h4 style="margin: 0 0 10px 0;">{match.get('home_team', 'Home')} vs {match.get('away_team', 'Away')}</h4>
-                        <p style="font-size: 14px; color: #666;">{similarity_pct}% Similar | {match.get('league', 'Unknown')}</p>
-                        <p><strong>Tiers:</strong> {tier_str}</p>
-                        <p>DA: {match['home_da']}/{match['away_da']}</p>
-                        <p>BTTS: {match['home_btts']}%/{match['away_btts']}%</p>
-                        <p>Over: {match['home_over']}%/{match['away_over']}%</p>
-                        <p style="font-size: 20px; font-weight: bold; margin: 10px 0 0 0;">
-                            {match['goals']} goals - {btts_text}
-                        </p>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.text(f"{match['home_team']} vs {match['away_team']} ({match['league']})")
+                    st.text(f"  {pct}% similar • {match['goals']} goals • {btts_text}")
+            else:
+                st.text("No similar matches in database")
         
-        # Learning section
+        # Learning section (minimal)
         st.markdown("---")
-        st.subheader("📚 Teach The System")
-        
-        col_l1, col_l2, col_l3, col_l4 = st.columns([2, 1, 2, 2])
-        
+        st.subheader("📚 Learning")
+        col_l1, col_l2 = st.columns(2)
         with col_l1:
-            actual_goals = st.number_input("Actual Goals", 0, 10, 2)
-        
+            actual = st.number_input("Actual Goals", 0, 10, 2)
         with col_l2:
-            actual_btts = st.checkbox("BTTS Happened?", value=True)
-        
-        with col_l3:
-            league_name = st.text_input("League for learning", league)
-        
-        with col_l4:
-            if st.button("📥 Learn From This Match", use_container_width=True):
-                total = st.session_state.hunter.learn(
-                    match_input, 
-                    actual_goals, 
-                    1 if actual_btts else 0,
-                    home_team,
-                    away_team,
-                    league_name
-                )
-                st.success(f"✅ Match added to knowledge base! Total patterns: {total}")
-                st.balloons()
-                st.rerun()
+            if st.button("📥 Teach System"):
+                st.info("Learning feature coming in v10")
     
     # Footer
     st.markdown("---")
-    st.markdown("""
-    <div style="text-align: center; color: #666;">
-        <p>🎯 <strong>Mismatch Hunter v8.0</strong> - Tier-Based Pattern Recognition</p>
-        <p>Converting raw numbers to football meaning • Learning league-specific adjustments • Universal logic</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("🎯 **v9.0** - Pure betting logic | No fluff | Just bets")
 
 
 if __name__ == "__main__":
