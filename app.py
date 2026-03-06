@@ -114,12 +114,6 @@ def save_match(match_input, home_team, away_team, league):
             match_input['away_over']
         )
         
-        # Debug - verify tiers are 1-4 only
-        for tier in tiers:
-            if tier < 1 or tier > 4:
-                st.error(f"INVALID TIER CALCULATED: {tiers}")
-                return None
-        
         data = {
             'home_team': home_team.strip(),
             'away_team': away_team.strip(),
@@ -252,25 +246,6 @@ def discover_patterns(min_matches=2):
                 btts_yes = sum(1 for m in matches_list if m.get('actual_btts', False))
                 btts_no = total - btts_yes
                 
-                # Pressure flag accuracy
-                high_pressure_btts = [m for m in matches_list if m.get('btts_pressure_flag', False)]
-                high_pressure_overs = [m for m in matches_list if m.get('overs_pressure_flag', False)]
-                
-                btts_pressure_accuracy = 0
-                if high_pressure_btts:
-                    btts_pressure_accuracy = sum(1 for m in high_pressure_btts if m.get('actual_btts')) / len(high_pressure_btts)
-                
-                overs_pressure_accuracy = 0
-                if high_pressure_overs:
-                    overs_pressure_accuracy = sum(1 for m in high_pressure_overs if m.get('actual_goals', 0) >= 3) / len(high_pressure_overs)
-                
-                # Home advantage impact
-                home_adv_matches = [m for m in matches_list if m.get('home_advantage_flag', False)]
-                home_adv_win_rate = 0
-                if home_adv_matches:
-                    home_adv_win_rate = sum(1 for m in home_adv_matches 
-                                           if m.get('home_goals', 0) > m.get('away_goals', 0)) / len(home_adv_matches)
-                
                 insights[sig] = {
                     'total': total,
                     'over_pct': (overs / total) * 100,
@@ -278,9 +253,6 @@ def discover_patterns(min_matches=2):
                     'btts_yes_pct': (btts_yes / total) * 100,
                     'btts_no_pct': (btts_no / total) * 100,
                     'avg_goals': sum(m.get('actual_goals', 0) for m in matches_list) / total,
-                    'btts_pressure_accuracy': btts_pressure_accuracy * 100,
-                    'overs_pressure_accuracy': overs_pressure_accuracy * 100,
-                    'home_adv_win_rate': home_adv_win_rate * 100,
                     'matches': matches_list
                 }
         
@@ -521,131 +493,167 @@ def main():
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Predict", "🔍 Discover Patterns", "📊 League Stats", "⚠️ Counter Threats", "🎯 Pressure Test"])
     
     with tab1:
-        col_form, col_result = st.columns([1, 1])
+        st.subheader("📋 Enter Match Data")
         
-        with col_form:
-            with st.form("match_input"):
-                st.subheader("📋 Enter Match Data")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("**🏠 HOME**")
-                    home_team = st.text_input("Home Team", "Parma")
-                    home_da = st.number_input("DA", 0, 100, 39)
-                    home_btts = st.number_input("BTTS %", 0, 100, 38)
-                    home_over = st.number_input("Over %", 0, 100, 35)
-                
-                with col2:
-                    st.markdown("**✈️ AWAY**")
-                    away_team = st.text_input("Away Team", "Cagliari")
-                    away_da = st.number_input("DA", 0, 100, 29, key="away_da")
-                    away_btts = st.number_input("BTTS %", 0, 100, 46, key="away_btts")
-                    away_over = st.number_input("Over %", 0, 100, 46, key="away_over")
-                
-                col3, col4, col5 = st.columns(3)
-                with col3:
-                    elite = st.checkbox("⭐ Elite")
-                with col4:
-                    derby = st.checkbox("🏆 Derby")
-                with col5:
-                    relegation = st.checkbox("⚠️ Relegation")
-                
-                league = st.text_input("League", "SERIE A")
-                submitted = st.form_submit_button("🎯 GENERATE PREDICTION", use_container_width=True)
+        with st.form("match_input_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**🏠 HOME**")
+                home_team = st.text_input("Home Team", "Parma")
+                home_da = st.number_input("DA", 0, 100, 39)
+                home_btts = st.number_input("BTTS %", 0, 100, 38)
+                home_over = st.number_input("Over %", 0, 100, 35)
+            
+            with col2:
+                st.markdown("**✈️ AWAY**")
+                away_team = st.text_input("Away Team", "Cagliari")
+                away_da = st.number_input("DA", 0, 100, 29, key="away_da")
+                away_btts = st.number_input("BTTS %", 0, 100, 46, key="away_btts")
+                away_over = st.number_input("Over %", 0, 100, 46, key="away_over")
+            
+            col3, col4, col5 = st.columns(3)
+            with col3:
+                elite = st.checkbox("⭐ Elite")
+            with col4:
+                derby = st.checkbox("🏆 Derby")
+            with col5:
+                relegation = st.checkbox("⚠️ Relegation")
+            
+            league = st.text_input("League", "SERIE A")
+            
+            # Generate Prediction button (does NOT save to database)
+            generate_clicked = st.form_submit_button("🎯 GENERATE PREDICTION", use_container_width=True)
         
-        with col_result:
-            if submitted:
-                match_input = {
-                    'home_da': home_da,
-                    'away_da': away_da,
-                    'home_btts': home_btts,
-                    'away_btts': away_btts,
-                    'home_over': home_over,
-                    'away_over': away_over,
-                    'elite': elite,
-                    'derby': derby,
-                    'relegation': relegation
-                }
+        # TIERS DISPLAY - Below the form, full width
+        if generate_clicked:
+            # Calculate tiers
+            tiers = calculate_tiers(home_da, away_da, home_btts, away_btts, home_over, away_over)
+            
+            # Store in session state for later saving
+            match_input = {
+                'home_da': home_da,
+                'away_da': away_da,
+                'home_btts': home_btts,
+                'away_btts': away_btts,
+                'home_over': home_over,
+                'away_over': away_over,
+                'elite': elite,
+                'derby': derby,
+                'relegation': relegation
+            }
+            
+            st.session_state['pending_match'] = {
+                'input': match_input,
+                'home_team': home_team,
+                'away_team': away_team,
+                'league': league,
+                'tiers': tiers
+            }
+            
+            # Display tiers prominently
+            st.markdown("---")
+            st.subheader("🎯 TIER SIGNATURE")
+            
+            # Create a nice grid for tiers
+            col_t1, col_t2, col_t3, col_t4, col_t5, col_t6 = st.columns(6)
+            labels = ['HOME DA', 'AWAY DA', 'HOME BTTS', 'AWAY BTTS', 'HOME OVER', 'AWAY OVER']
+            cats = ['da', 'da', 'btts', 'btts', 'over', 'over']
+            
+            for i, (col, label, cat) in enumerate(zip([col_t1, col_t2, col_t3, col_t4, col_t5, col_t6], labels, cats)):
+                emoji = tier_to_emoji(tiers[i], cat)
+                desc = get_tier_description(tiers[i], cat)
+                col.metric(label, f"{emoji} TIER {tiers[i]}", help=desc)
+            
+            # Check historical patterns
+            tier_sig = str(tiers)
+            history = get_pattern_history(tier_sig, league)
+            
+            if history:
+                prediction = generate_prediction(history)
+                st.markdown("---")
+                st.subheader("📊 HISTORICAL PATTERN")
                 
-                # Calculate tiers
-                tiers = calculate_tiers(home_da, away_da, home_btts, away_btts, home_over, away_over)
+                col_h1, col_h2, col_h3, col_h4 = st.columns(4)
+                col_h1.metric("Matches", prediction['stats']['total'])
+                col_h2.metric("Prediction", prediction['prediction'])
+                col_h3.metric("Confidence", f"{prediction['confidence']:.0f}%")
+                col_h4.metric("Avg Goals", f"{prediction['stats']['avg_goals']:.1f}")
                 
-                # Display tiers
-                st.subheader("🎯 Tier Signature")
-                cols = st.columns(6)
-                labels = ['H-DA', 'A-DA', 'H-BTTS', 'A-BTTS', 'H-OVER', 'A-OVER']
-                cats = ['da', 'da', 'btts', 'btts', 'over', 'over']
+                st.info(prediction['explanation'])
+                st.caption(prediction['btts_note'])
                 
-                for i, (col, label, cat) in enumerate(zip(cols, labels, cats)):
-                    emoji = tier_to_emoji(tiers[i], cat)
-                    desc = get_tier_description(tiers[i], cat)
-                    col.metric(label, f"{emoji} {tiers[i]}", help=desc)
-                
-                # Check historical patterns
-                tier_sig = str(tiers)
-                history = get_pattern_history(tier_sig, league)
-                
-                if history:
-                    prediction = generate_prediction(history)
-                    st.subheader("📊 Historical Pattern")
+                # Show recent matches
+                with st.expander("View historical matches"):
+                    for m in history[:5]:
+                        score = f"{m.get('home_goals', '?')}-{m.get('away_goals', '?')}"
+                        btts_icon = "✅" if m.get('actual_btts') else "❌"
+                        over_icon = "🔥" if m.get('actual_goals', 0) >= 3 else "📉"
+                        st.text(f"• {m['home_team']} {score} {m['away_team']} | {btts_icon} BTTS | {over_icon} {m.get('actual_goals', 0)} goals")
+            else:
+                st.markdown("---")
+                st.info("🆕 No historical matches with this exact pattern yet")
+            
+            # SAVE BUTTON - Separate from GENERATE, only appears after generation
+            st.markdown("---")
+            col_save1, col_save2, col_save3 = st.columns([1, 2, 1])
+            with col_save2:
+                if st.button("💾 SAVE MATCH TO DATABASE", use_container_width=True, type="primary"):
+                    match_id = save_match(
+                        st.session_state['pending_match']['input'],
+                        st.session_state['pending_match']['home_team'],
+                        st.session_state['pending_match']['away_team'],
+                        st.session_state['pending_match']['league']
+                    )
                     
-                    col_h1, col_h2, col_h3 = st.columns(3)
-                    col_h1.metric("Total Matches", prediction['stats']['total'])
-                    col_h2.metric(prediction['prediction'], f"{prediction['confidence']:.0f}%")
-                    col_h3.metric("Avg Goals", f"{prediction['stats']['avg_goals']:.1f}")
-                    
-                    st.info(prediction['explanation'])
-                    st.caption(prediction['btts_note'])
-                else:
-                    st.info("🆕 No historical matches with this exact pattern yet")
+                    if match_id:
+                        st.session_state['current_match_id'] = match_id
+                        st.session_state['current_home'] = home_team
+                        st.session_state['current_away'] = away_team
+                        st.success(f"✅ Match saved to database (ID: {match_id})")
+                        st.rerun()
+        
+        # RESULT ENTRY SECTION - Shows after match is saved
+        if 'current_match_id' in st.session_state:
+            st.markdown("---")
+            st.subheader("📥 ENTER ACTUAL RESULT")
+            
+            with st.form("result_entry_form"):
+                col_r1, col_r2 = st.columns(2)
                 
-                # Save to database
-                match_id = save_match(match_input, home_team, away_team, league)
+                with col_r1:
+                    home_goals = st.number_input(f"{st.session_state['current_home']} Goals", 0, 10, 0)
                 
-                if match_id:
-                    st.session_state['current_match_id'] = match_id
-                    st.session_state['current_home'] = home_team
-                    st.session_state['current_away'] = away_team
-                    st.success(f"✅ Match saved (ID: {match_id})")
-                    
-                    # Show result entry form immediately
-                    st.markdown("---")
-                    st.subheader("📥 ENTER ACTUAL RESULT NOW")
-                    
-                    with st.form("result_input_immediate"):
-                        col_r1, col_r2 = st.columns(2)
-                        
-                        with col_r1:
-                            home_goals = st.number_input(f"{home_team} Goals", 0, 10, 0, key="home_goals_immediate")
-                        
-                        with col_r2:
-                            away_goals = st.number_input(f"{away_team} Goals", 0, 10, 0, key="away_goals_immediate")
-                        
-                        notes = st.text_input("Notes (penalty, red card, etc.)", "")
-                        
-                        # Show preview
-                        total_goals = home_goals + away_goals
-                        btts = "✅ YES" if (home_goals > 0 and away_goals > 0) else "❌ NO"
-                        over = "✅ YES" if total_goals >= 3 else "❌ NO"
-                        
-                        st.markdown(f"""
-                        **Preview:**
-                        - Score: {home_goals} - {away_goals}
-                        - Total Goals: {total_goals}
-                        - BTTS: {btts}
-                        - Over 2.5: {over}
-                        """)
-                        
-                        submitted_result = st.form_submit_button("📥 SAVE RESULT", use_container_width=True)
-                        
-                        if submitted_result:
-                            if update_result(match_id, home_goals, away_goals, notes):
-                                st.success(f"✅ Result saved!")
-                                st.balloons()
-                                if 'current_match_id' in st.session_state:
-                                    del st.session_state['current_match_id']
-                                st.rerun()
+                with col_r2:
+                    away_goals = st.number_input(f"{st.session_state['current_away']} Goals", 0, 10, 0)
+                
+                notes = st.text_input("Notes (penalty, red card, etc.)", "")
+                
+                # Show preview
+                total_goals = home_goals + away_goals
+                btts = "✅ YES" if (home_goals > 0 and away_goals > 0) else "❌ NO"
+                over = "✅ YES" if total_goals >= 3 else "❌ NO"
+                
+                st.markdown(f"""
+                **Preview:**
+                - Score: {home_goals} - {away_goals}
+                - Total Goals: {total_goals}
+                - BTTS: {btts}
+                - Over 2.5: {over}
+                """)
+                
+                submitted_result = st.form_submit_button("📥 SAVE RESULT", use_container_width=True, type="primary")
+                
+                if submitted_result:
+                    if update_result(st.session_state['current_match_id'], home_goals, away_goals, notes):
+                        st.success(f"✅ Result saved!")
+                        st.balloons()
+                        del st.session_state['current_match_id']
+                        if 'current_home' in st.session_state:
+                            del st.session_state['current_home']
+                        if 'current_away' in st.session_state:
+                            del st.session_state['current_away']
+                        st.rerun()
     
     with tab2:
         st.header("🔍 Pattern Discovery")
