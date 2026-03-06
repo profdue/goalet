@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import plotly.graph_objects as go
+import re
 
 # Try to import supabase with error handling
 try:
@@ -20,7 +20,7 @@ st.set_page_config(
 )
 
 # ============================================================================
-# SUPABASE FUNCTIONS (only if available)
+# SUPABASE FUNCTIONS
 # ============================================================================
 
 if SUPABASE_AVAILABLE:
@@ -39,38 +39,29 @@ else:
     supabase = None
 
 # ============================================================================
-# DATABASE FUNCTIONS (with fallbacks)
+# DATABASE FUNCTIONS
 # ============================================================================
 
+def parse_score(score_str):
+    """Parse score string like '2-1' into home_goals and away_goals"""
+    if not score_str or '-' not in score_str:
+        return None, None
+    
+    try:
+        parts = score_str.split('-')
+        home = int(parts[0].strip())
+        away = int(parts[1].strip())
+        return home, away
+    except:
+        return None, None
+
 def save_match(match_input, home_team, away_team, league):
-    """Save match to Supabase (with fallback to session state)"""
+    """Save match to Supabase"""
     
     if supabase is None:
-        # Fallback: save to session state
-        if 'local_matches' not in st.session_state:
-            st.session_state.local_matches = []
-        
-        match_id = len(st.session_state.local_matches) + 1
-        st.session_state.local_matches.append({
-            'id': match_id,
-            'home_team': home_team,
-            'away_team': away_team,
-            'league': league,
-            'match_date': datetime.now().date().isoformat(),
-            'home_da': match_input['home_da'],
-            'away_da': match_input['away_da'],
-            'home_btts': match_input['home_btts'],
-            'away_btts': match_input['away_btts'],
-            'home_over': match_input['home_over'],
-            'away_over': match_input['away_over'],
-            'elite': match_input.get('elite', False),
-            'derby': match_input.get('derby', False),
-            'relegation': match_input.get('relegation', False),
-            'result_entered': False
-        })
-        return match_id
+        st.error("Supabase not connected")
+        return None
     
-    # Supabase version
     try:
         data = {
             'home_team': home_team,
@@ -95,29 +86,27 @@ def save_match(match_input, home_team, away_team, league):
         st.error(f"Error saving to database: {e}")
         return None
 
-def update_result(match_id, actual_goals, actual_btts, notes=""):
-    """Update match with actual result"""
+def update_result(match_id, home_goals, away_goals, notes=""):
+    """Update match with actual result using home/away goals"""
     
     if supabase is None:
-        # Fallback: update session state
-        if 'local_matches' in st.session_state:
-            for match in st.session_state.local_matches:
-                if match['id'] == match_id:
-                    match['actual_goals'] = actual_goals
-                    match['actual_btts'] = actual_btts
-                    match['result_entered'] = True
-                    match['notes'] = notes
-                    return True
+        st.error("Supabase not connected")
         return False
     
-    # Supabase version
     try:
+        # Calculate derived fields
+        total_goals = home_goals + away_goals
+        btts = (home_goals > 0 and away_goals > 0)
+        
         data = {
-            'actual_goals': actual_goals,
-            'actual_btts': actual_btts,
+            'home_goals': home_goals,
+            'away_goals': away_goals,
+            'actual_goals': total_goals,  # keeping for backward compatibility
+            'actual_btts': btts,
             'result_entered': True,
             'notes': notes
         }
+        
         supabase.table('matches').update(data).eq('id', match_id).execute()
         return True
     except Exception as e:
@@ -128,18 +117,8 @@ def get_pattern_history(tier_signature, league=None, min_matches=2):
     """Get historical matches with same tier signature"""
     
     if supabase is None:
-        # Fallback: check session state
-        if 'local_matches' not in st.session_state:
-            return []
-        
-        matches = [m for m in st.session_state.local_matches 
-                  if m.get('result_entered', False)]
-        
-        # Filter by tier signature (would need tier calculation in app)
-        # For now, return empty
         return []
     
-    # Supabase version
     try:
         query = supabase.table('matches')\
             .select('*')\
@@ -220,36 +199,12 @@ def discover_patterns(min_matches=3):
         st.error(f"Error discovering patterns: {e}")
         return {}
 
-def get_counter_threats(league=None, threshold=45):
-    """Identify teams that overperform"""
-    
-    if supabase is None:
-        return {}
-    
-    try:
-        query = supabase.table('matches')\
-            .select('*')\
-            .eq('result_entered', True)
-        
-        if league:
-            query = query.eq('league', league)
-        
-        result = query.execute()
-        matches = result.data
-        
-        # Analyze teams (simplified)
-        threats = {}
-        # Add your counter threat logic here
-        return threats
-    except Exception as e:
-        return {}
-
 # ============================================================================
 # TIER FUNCTIONS
 # ============================================================================
 
 def calculate_tiers(home_da, away_da, home_btts, away_btts, home_over, away_over):
-    """Calculate tiers manually (fallback when DB doesn't)"""
+    """Calculate tiers manually"""
     
     def da_tier(da):
         if da >= 80: return 1
@@ -319,13 +274,10 @@ def main():
                 
                 patterns = discover_patterns(min_matches=2)
                 st.metric("Discovered Patterns", len(patterns))
-            except:
+            except Exception as e:
                 st.info("No matches in database yet")
         else:
-            if 'local_matches' in st.session_state:
-                st.metric("Local Matches", len(st.session_state.local_matches))
-            else:
-                st.info("No local matches")
+            st.info("Supabase not connected")
         
         st.markdown("---")
         st.markdown("**Tiers:** 1💥 2⚡ 3📊 4🐢 5🛡️")
@@ -362,7 +314,7 @@ def main():
                 relegation = st.checkbox("⚠️ Relegation")
             
             league = st.text_input("League", "BUNDESLIGA")
-            submitted = st.form_submit_button("🎯 GET PREDICTION", use_container_width=True)
+            submitted = st.form_submit_button("🎯 SAVE MATCH & GET PREDICTION", use_container_width=True)
         
         if submitted:
             match_input = {
@@ -394,27 +346,61 @@ def main():
             
             if match_id:
                 st.session_state['current_match_id'] = match_id
-                st.success(f"✅ Match saved (ID: {match_id})")
+                st.success(f"✅ Match saved to Supabase (ID: {match_id})")
                 
-                # Check historical patterns (would need tier_signature from DB)
-                st.info("🆕 Pattern learning will work after Supabase is fully configured")
+                # Simple prediction based on tiers (you can enhance this)
+                if tiers[4] <= 2 or tiers[5] <= 2:  # Any Over Tier 1-2
+                    st.info("🔮 PRELIMINARY: Over 2.5 possible")
+                if tiers[2] <= 2 and tiers[3] <= 2:  # Both BTTS Tier 1-2
+                    st.info("🔮 PRELIMINARY: BTTS likely")
+        
+        # Learning section - SEPARATE FORM for results
+        st.markdown("---")
+        st.subheader("📚 Enter Actual Result")
+        
+        if 'current_match_id' in st.session_state:
+            st.info(f"Entering result for match ID: {st.session_state['current_match_id']}")
             
-            # Learning section
-            st.markdown("---")
-            st.subheader("📚 Enter Result")
-            
-            col_l1, col_l2, col_l3 = st.columns(3)
-            with col_l1:
-                actual_goals = st.number_input("Actual Goals", 0, 10, 2)
-            with col_l2:
-                actual_btts = st.checkbox("BTTS Happened?")
-            with col_l3:
-                notes = st.text_input("Notes (optional)", "")
-            
-            if st.button("📥 Save Result"):
-                if match_id and update_result(match_id, actual_goals, actual_btts, notes):
-                    st.success("✅ Result saved!")
-                    st.balloons()
+            with st.form("result_input"):
+                col_r1, col_r2, col_r3 = st.columns(3)
+                
+                with col_r1:
+                    st.markdown("**🏠 HOME GOALS**")
+                    home_goals = st.number_input("Home Goals", 0, 10, 0, key="home_goals")
+                
+                with col_r2:
+                    st.markdown("**✈️ AWAY GOALS**")
+                    away_goals = st.number_input("Away Goals", 0, 10, 0, key="away_goals")
+                
+                with col_r3:
+                    st.markdown("**📝 NOTES**")
+                    notes = st.text_input("Notes (e.g., 'penalty', 'red card', 'late goal')", "")
+                
+                # Display score preview
+                score_display = f"{home_goals} - {away_goals}"
+                btts_display = "✅ YES" if (home_goals > 0 and away_goals > 0) else "❌ NO"
+                total_goals = home_goals + away_goals
+                over_display = "✅ YES" if total_goals >= 3 else "❌ NO"
+                
+                st.markdown(f"""
+                **Score:** {score_display}
+                **Total Goals:** {total_goals}
+                **BTTS:** {btts_display}
+                **Over 2.5:** {over_display}
+                """)
+                
+                submitted_result = st.form_submit_button("📥 SAVE RESULT TO SUPABASE", use_container_width=True)
+                
+                if submitted_result:
+                    if update_result(st.session_state['current_match_id'], home_goals, away_goals, notes):
+                        st.success(f"✅ Result {home_goals}-{away_goals} saved to Supabase!")
+                        st.balloons()
+                        
+                        # Clear the match ID from session state
+                        del st.session_state['current_match_id']
+                        st.rerun()
+        else:
+            st.info("No active match. Save a match first to enter results.")
     
     with tab2:
         st.header("🔍 Pattern Discovery")
@@ -434,12 +420,29 @@ def main():
     with tab3:
         st.header("📊 League Statistics")
         
-        leagues = ['EPL', 'BUNDESLIGA', 'SERIE A', 'LA LIGA', 'SUPER LIG']
+        leagues = ['EPL', 'BUNDESLIGA', 'SERIE A', 'LA LIGA', 'SUPER LIG', 'AUSTRIAN']
         
         for league in leagues:
             matches = get_league_stats(league)
             if matches:
                 with st.expander(f"{league} ({len(matches)} matches)"):
+                    # Create a DataFrame for display
+                    df_data = []
+                    for m in matches:
+                        df_data.append({
+                            'Date': m.get('match_date', ''),
+                            'Home': m.get('home_team', ''),
+                            'Away': m.get('away_team', ''),
+                            'Score': f"{m.get('home_goals', '?')}-{m.get('away_goals', '?')}",
+                            'BTTS': '✅' if m.get('actual_btts') else '❌',
+                            'Goals': m.get('actual_goals', 0)
+                        })
+                    
+                    if df_data:
+                        df = pd.DataFrame(df_data)
+                        st.dataframe(df, use_container_width=True)
+                    
+                    # Stats
                     overs = sum(1 for m in matches if m.get('actual_goals', 0) >= 3)
                     btts = sum(1 for m in matches if m.get('actual_btts', False))
                     
