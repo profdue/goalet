@@ -27,8 +27,8 @@ if SUPABASE_AVAILABLE:
     @st.cache_resource
     def init_supabase():
         try:
-            url = st.secrets["SUPABASE_URL"]
-            key = st.secrets["SUPABASE_KEY"]
+            url = st.secrets["https://pqkzgypsllkffqnvdsyn.supabase.co"]
+            key = st.secrets["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxa3pneXBzbGxrZmZxbnZkc3luIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAwNDgxMTksImV4cCI6MjA3NTYyNDExOX0.XkstUBWkV4PU7GA9iTuYjwXlU8wethki2TGv9kzwRAU"]
             return create_client(url, key)
         except Exception as e:
             st.error(f"Failed to connect to Supabase: {e}")
