@@ -48,18 +48,21 @@ def calculate_tiers(home_da, away_da, home_btts, away_btts, home_over, away_over
     """Calculate tiers - ONLY returns 1-4"""
     
     def da_tier(value):
+        if value is None: return 4
         if value >= 70: return 1
         if value >= 55: return 2
         if value >= 40: return 3
         return 4
     
     def btts_tier(value):
+        if value is None: return 4
         if value >= 65: return 1
         if value >= 55: return 2
         if value >= 45: return 3
         return 4
     
     def over_tier(value):
+        if value is None: return 4
         if value >= 65: return 1
         if value >= 55: return 2
         if value >= 45: return 3
@@ -149,6 +152,14 @@ def save_match(match_input, home_team, away_team, league, home_goals=None, away_
         st.error(f"Error saving to database: {e}")
         return None
 
+def safe_get(value, default=0):
+    """Safely get value, return default if None"""
+    return value if value is not None else default
+
+def safe_bool(value, default=False):
+    """Safely get boolean, return default if None"""
+    return value if value is not None else default
+
 def get_pattern_history(tier_signature, league=None, min_matches=1):
     if supabase is None:
         return []
@@ -203,16 +214,16 @@ def discover_patterns(min_matches=2):
         for sig, matches_list in patterns.items():
             if len(matches_list) >= min_matches:
                 total = len(matches_list)
-                overs = sum(1 for m in matches_list if m.get('actual_goals', 0) >= 3)
-                btts_yes = sum(1 for m in matches_list if m.get('actual_btts', False))
+                overs = sum(1 for m in matches_list if safe_get(m.get('actual_goals')) >= 3)
+                btts_yes = sum(1 for m in matches_list if safe_bool(m.get('actual_btts')))
                 
                 insights[sig] = {
                     'total': total,
-                    'over_pct': (overs / total) * 100,
-                    'under_pct': ((total - overs) / total) * 100,
-                    'btts_yes_pct': (btts_yes / total) * 100,
-                    'btts_no_pct': ((total - btts_yes) / total) * 100,
-                    'avg_goals': sum(m.get('actual_goals', 0) for m in matches_list) / total,
+                    'over_pct': (overs / total) * 100 if total > 0 else 0,
+                    'under_pct': ((total - overs) / total) * 100 if total > 0 else 0,
+                    'btts_yes_pct': (btts_yes / total) * 100 if total > 0 else 0,
+                    'btts_no_pct': ((total - btts_yes) / total) * 100 if total > 0 else 0,
+                    'avg_goals': sum(safe_get(m.get('actual_goals')) for m in matches_list) / total if total > 0 else 0,
                     'matches': matches_list
                 }
         return insights
@@ -238,9 +249,9 @@ def get_counter_threats(league=None):
                 team = match[f'{team_key}_team']
                 if team not in team_stats:
                     team_stats[team] = {'btts_stat': [], 'actual_btts': [], 'goals_scored': []}
-                team_stats[team]['btts_stat'].append(match[f'{team_key}_btts'])
-                team_stats[team]['actual_btts'].append(1 if match['actual_btts'] else 0)
-                team_stats[team]['goals_scored'].append(match.get(f'{team_key}_goals', 0))
+                team_stats[team]['btts_stat'].append(safe_get(match[f'{team_key}_btts']))
+                team_stats[team]['actual_btts'].append(1 if safe_bool(match.get('actual_btts')) else 0)
+                team_stats[team]['goals_scored'].append(safe_get(match.get(f'{team_key}_goals')))
         
         threats = {}
         for team, stats in team_stats.items():
@@ -275,39 +286,40 @@ def get_pressure_test_results():
         if len(matches) < 5:
             return {}
         
-        btts_high = [m for m in matches if m.get('btts_pressure_flag', False)]
-        btts_low = [m for m in matches if not m.get('btts_pressure_flag', False)]
-        overs_high = [m for m in matches if m.get('overs_pressure_flag', False)]
-        overs_low = [m for m in matches if not m.get('overs_pressure_flag', False)]
-        home_adv = [m for m in matches if m.get('home_advantage_flag', False)]
-        no_home_adv = [m for m in matches if not m.get('home_advantage_flag', False)]
-        high_importance = [m for m in matches if m.get('importance_score', 0) >= 2]
-        low_importance = [m for m in matches if m.get('importance_score', 0) == 0]
+        # Safely get boolean flags
+        btts_high = [m for m in matches if safe_bool(m.get('btts_pressure_flag'))]
+        btts_low = [m for m in matches if not safe_bool(m.get('btts_pressure_flag'))]
+        overs_high = [m for m in matches if safe_bool(m.get('overs_pressure_flag'))]
+        overs_low = [m for m in matches if not safe_bool(m.get('overs_pressure_flag'))]
+        home_adv = [m for m in matches if safe_bool(m.get('home_advantage_flag'))]
+        no_home_adv = [m for m in matches if not safe_bool(m.get('home_advantage_flag'))]
+        high_importance = [m for m in matches if safe_get(m.get('importance_score')) >= 2]
+        low_importance = [m for m in matches if safe_get(m.get('importance_score')) == 0]
         
         return {
             'btts_pressure': {
                 'high_count': len(btts_high),
-                'high_btts_rate': sum(1 for m in btts_high if m.get('actual_btts')) / len(btts_high) if btts_high else 0,
+                'high_btts_rate': sum(1 for m in btts_high if safe_bool(m.get('actual_btts'))) / len(btts_high) if btts_high else 0,
                 'low_count': len(btts_low),
-                'low_btts_rate': sum(1 for m in btts_low if m.get('actual_btts')) / len(btts_low) if btts_low else 0,
+                'low_btts_rate': sum(1 for m in btts_low if safe_bool(m.get('actual_btts'))) / len(btts_low) if btts_low else 0,
             },
             'overs_pressure': {
                 'high_count': len(overs_high),
-                'high_over_rate': sum(1 for m in overs_high if m.get('actual_goals', 0) >= 3) / len(overs_high) if overs_high else 0,
+                'high_over_rate': sum(1 for m in overs_high if safe_get(m.get('actual_goals')) >= 3) / len(overs_high) if overs_high else 0,
                 'low_count': len(overs_low),
-                'low_over_rate': sum(1 for m in overs_low if m.get('actual_goals', 0) >= 3) / len(overs_low) if overs_low else 0,
+                'low_over_rate': sum(1 for m in overs_low if safe_get(m.get('actual_goals')) >= 3) / len(overs_low) if overs_low else 0,
             },
             'home_advantage': {
                 'adv_count': len(home_adv),
-                'adv_win_rate': sum(1 for m in home_adv if m.get('home_goals', 0) > m.get('away_goals', 0)) / len(home_adv) if home_adv else 0,
+                'adv_win_rate': sum(1 for m in home_adv if safe_get(m.get('home_goals')) > safe_get(m.get('away_goals'))) / len(home_adv) if home_adv else 0,
                 'no_adv_count': len(no_home_adv),
-                'no_adv_win_rate': sum(1 for m in no_home_adv if m.get('home_goals', 0) > m.get('away_goals', 0)) / len(no_home_adv) if no_home_adv else 0,
+                'no_adv_win_rate': sum(1 for m in no_home_adv if safe_get(m.get('home_goals')) > safe_get(m.get('away_goals'))) / len(no_home_adv) if no_home_adv else 0,
             },
             'importance': {
                 'high_count': len(high_importance),
-                'high_avg_goals': sum(m.get('actual_goals', 0) for m in high_importance) / len(high_importance) if high_importance else 0,
+                'high_avg_goals': sum(safe_get(m.get('actual_goals')) for m in high_importance) / len(high_importance) if high_importance else 0,
                 'low_count': len(low_importance),
-                'low_avg_goals': sum(m.get('actual_goals', 0) for m in low_importance) / len(low_importance) if low_importance else 0,
+                'low_avg_goals': sum(safe_get(m.get('actual_goals')) for m in low_importance) / len(low_importance) if low_importance else 0,
             }
         }
     except Exception as e:
@@ -323,10 +335,10 @@ def generate_prediction(history_matches):
         return None
     
     total = len(history_matches)
-    overs = sum(1 for m in history_matches if m.get('actual_goals', 0) >= 3)
-    btts_yes = sum(1 for m in history_matches if m.get('actual_btts', False))
+    overs = sum(1 for m in history_matches if safe_get(m.get('actual_goals')) >= 3)
+    btts_yes = sum(1 for m in history_matches if safe_bool(m.get('actual_btts')))
     
-    over_pct = (overs / total) * 100
+    over_pct = (overs / total) * 100 if total > 0 else 0
     
     if over_pct >= 70:
         prediction = "🔥 OVER 2.5"
@@ -345,14 +357,14 @@ def generate_prediction(history_matches):
         'prediction': prediction,
         'confidence': min(confidence, 95),
         'explanation': explanation,
-        'btts_note': f"BTTS: {btts_yes}/{total} ({(btts_yes/total)*100:.0f}%)",
+        'btts_note': f"BTTS: {btts_yes}/{total} ({(btts_yes/total)*100:.0f}%)" if total > 0 else "BTTS: No data",
         'stats': {
             'total': total,
             'over': overs,
             'under': total - overs,
             'btts_yes': btts_yes,
             'btts_no': total - btts_yes,
-            'avg_goals': sum(m.get('actual_goals', 0) for m in history_matches) / total
+            'avg_goals': sum(safe_get(m.get('actual_goals')) for m in history_matches) / total if total > 0 else 0
         }
     }
 
@@ -378,11 +390,16 @@ def main():
             try:
                 total = supabase.table('matches').select('*', count='exact').execute()
                 completed = supabase.table('matches').select('*', count='exact').eq('result_entered', True).execute()
-                st.metric("Total Matches", total.count if hasattr(total, 'count') else 0)
-                st.metric("Completed", completed.count if hasattr(completed, 'count') else 0)
                 
-                patterns = discover_patterns(min_matches=2)
-                st.metric("Discovered Patterns", len(patterns))
+                total_count = total.count if hasattr(total, 'count') else 0
+                completed_count = completed.count if hasattr(completed, 'count') else 0
+                
+                st.metric("Total Matches", total_count)
+                st.metric("Completed", completed_count)
+                
+                if total_count > 0:
+                    patterns = discover_patterns(min_matches=2)
+                    st.metric("Discovered Patterns", len(patterns))
                 
                 threats = get_counter_threats()
                 if threats:
@@ -390,11 +407,12 @@ def main():
                     for team, data in list(threats.items())[:3]:
                         st.text(f"• {team}: +{data['diff']}%")
                 
-                pressure_results = get_pressure_test_results()
-                if pressure_results:
-                    st.subheader("🎯 Pressure Test")
-                    btts_diff = pressure_results['btts_pressure']['high_btts_rate'] - pressure_results['btts_pressure']['low_btts_rate']
-                    st.metric("BTTS Flag Accuracy", f"{btts_diff*100:.0f}% better")
+                if completed_count >= 5:
+                    pressure_results = get_pressure_test_results()
+                    if pressure_results:
+                        st.subheader("🎯 Pressure Test")
+                        btts_diff = pressure_results['btts_pressure']['high_btts_rate'] - pressure_results['btts_pressure']['low_btts_rate']
+                        st.metric("BTTS Flag Accuracy", f"{btts_diff*100:.0f}% better")
             except Exception as e:
                 st.info("No matches in database yet")
         else:
@@ -501,10 +519,16 @@ def main():
                     
                     with st.expander("View historical matches"):
                         for m in history[:5]:
-                            score = f"{m.get('home_goals', '?')}-{m.get('away_goals', '?')}"
+                            home = m.get('home_team', '?')
+                            away = m.get('away_team', '?')
+                            home_score = m.get('home_goals', '?')
+                            away_score = m.get('away_goals', '?')
+                            score = f"{home_score if home_score is not None else '?'}-{away_score if away_score is not None else '?'}"
                             btts_icon = "✅" if m.get('actual_btts') else "❌"
-                            over_icon = "🔥" if m.get('actual_goals', 0) >= 3 else "📉"
-                            st.text(f"• {m['home_team']} {score} {m['away_team']} | {btts_icon} BTTS | {over_icon} {m.get('actual_goals', 0)} goals")
+                            goals = m.get('actual_goals')
+                            goals_display = goals if goals is not None else '?'
+                            over_icon = "🔥" if goals is not None and goals >= 3 else "📉" if goals is not None else "❓"
+                            st.text(f"• {home} {score} {away} | {btts_icon} BTTS | {over_icon} {goals_display} goals")
             else:
                 st.markdown("---")
                 st.info("🆕 No historical matches with this exact pattern yet")
@@ -571,7 +595,8 @@ def main():
                         st.balloons()
                         # Clear session state
                         st.session_state.show_result_entry = False
-                        del st.session_state.pending_match
+                        if 'pending_match' in st.session_state:
+                            del st.session_state.pending_match
                         st.rerun()
     
     with tab2:
@@ -593,8 +618,12 @@ def main():
                     
                     with st.expander("View matches"):
                         for m in data['matches']:
-                            score = f"{m.get('home_goals', '?')}-{m.get('away_goals', '?')}"
-                            st.text(f"• {m['home_team']} {score} {m['away_team']} ({m['league']})")
+                            home = m.get('home_team', '?')
+                            away = m.get('away_team', '?')
+                            home_score = m.get('home_goals', '?')
+                            away_score = m.get('away_goals', '?')
+                            score = f"{home_score if home_score is not None else '?'}-{away_score if away_score is not None else '?'}"
+                            st.text(f"• {home} {score} {away} ({m.get('league', '?')})")
         else:
             st.info(f"Add at least {min_matches} completed matches with the same tier pattern to discover patterns")
     
@@ -608,17 +637,23 @@ def main():
                 with st.expander(f"{league} ({len(matches)} matches)"):
                     df_data = []
                     for m in matches:
-                        score = f"{m.get('home_goals', '?')}-{m.get('away_goals', '?')}"
+                        home = m.get('home_team', '?')
+                        away = m.get('away_team', '?')
+                        home_score = m.get('home_goals')
+                        away_score = m.get('away_goals')
+                        score = f"{home_score if home_score is not None else '?'}-{away_score if away_score is not None else '?'}"
                         btts_icon = "✅" if m.get('actual_btts') else "❌"
-                        over_icon = "🔥" if m.get('actual_goals', 0) >= 3 else "📉"
+                        goals = m.get('actual_goals')
+                        goals_display = goals if goals is not None else '?'
+                        over_icon = "🔥" if goals is not None and goals >= 3 else "📉" if goals is not None else "❓"
                         
                         df_data.append({
-                            'Date': m.get('match_date', '')[-5:],
-                            'Home': m.get('home_team', ''),
+                            'Date': m.get('match_date', '')[-5:] if m.get('match_date') else '?',
+                            'Home': home,
                             'Score': score,
-                            'Away': m.get('away_team', ''),
+                            'Away': away,
                             'BTTS': btts_icon,
-                            'Goals': m.get('actual_goals', 0),
+                            'Goals': goals_display,
                             'O/U': over_icon
                         })
                     
@@ -627,14 +662,15 @@ def main():
                         st.dataframe(df, use_container_width=True, hide_index=True)
                     
                     total = len(matches)
-                    overs = sum(1 for m in matches if m.get('actual_goals', 0) >= 3)
-                    btts_yes = sum(1 for m in matches if m.get('actual_btts', False))
+                    overs = sum(1 for m in matches if m.get('actual_goals') is not None and m.get('actual_goals') >= 3)
+                    btts_yes = sum(1 for m in matches if m.get('actual_btts'))
+                    total_goals = sum(m.get('actual_goals') for m in matches if m.get('actual_goals') is not None)
                     
                     col1, col2, col3, col4 = st.columns(4)
                     col1.metric("Total", total)
-                    col2.metric("Over 2.5", f"{overs}/{total} ({overs/total*100:.0f}%)")
-                    col3.metric("BTTS", f"{btts_yes}/{total} ({btts_yes/total*100:.0f}%)")
-                    col4.metric("Avg Goals", f"{sum(m.get('actual_goals', 0) for m in matches)/total:.1f}")
+                    col2.metric("Over 2.5", f"{overs}/{total} ({overs/total*100:.0f}%)" if total > 0 else "0/0")
+                    col3.metric("BTTS", f"{btts_yes}/{total} ({btts_yes/total*100:.0f}%)" if total > 0 else "0/0")
+                    col4.metric("Avg Goals", f"{total_goals/total:.1f}" if total > 0 and total_goals > 0 else "0.0")
     
     with tab4:
         st.header("⚠️ Counter Threat Teams")
@@ -671,96 +707,108 @@ def main():
         st.header("🎯 Pressure Test")
         st.markdown("### How well do our computed flags predict outcomes?")
         
-        pressure_results = get_pressure_test_results()
-        
-        if pressure_results:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("BTTS Pressure Flag")
-                btts = pressure_results['btts_pressure']
+        if supabase:
+            try:
+                completed = supabase.table('matches').select('*', count='exact').eq('result_entered', True).execute()
+                completed_count = completed.count if hasattr(completed, 'count') else 0
                 
-                fig = go.Figure(data=[
-                    go.Bar(name='High Pressure', x=['BTTS Rate'], y=[btts['high_btts_rate']*100],
-                          marker_color='green', text=[f"{btts['high_btts_rate']*100:.1f}%"],
-                          textposition='outside'),
-                    go.Bar(name='Low Pressure', x=['BTTS Rate'], y=[btts['low_btts_rate']*100],
-                          marker_color='red', text=[f"{btts['low_btts_rate']*100:.1f}%"],
-                          textposition='outside')
-                ])
-                fig.update_layout(title=f"BTTS Rate by Pressure Flag (High: {btts['high_count']}, Low: {btts['low_count']})",
-                                 yaxis_title="Percentage")
-                st.plotly_chart(fig, use_container_width=True)
-                
-                diff = (btts['high_btts_rate'] - btts['low_btts_rate']) * 100
-                if diff > 10:
-                    st.success(f"✅ BTTS Pressure Flag is working! +{diff:.1f}% difference")
-                elif diff < -10:
-                    st.warning(f"⚠️ BTTS Pressure Flag is inverted! {diff:.1f}% difference")
+                if completed_count >= 5:
+                    pressure_results = get_pressure_test_results()
+                    
+                    if pressure_results:
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.subheader("BTTS Pressure Flag")
+                            btts = pressure_results['btts_pressure']
+                            
+                            fig = go.Figure(data=[
+                                go.Bar(name='High Pressure', x=['BTTS Rate'], y=[btts['high_btts_rate']*100],
+                                      marker_color='green', text=[f"{btts['high_btts_rate']*100:.1f}%"],
+                                      textposition='outside'),
+                                go.Bar(name='Low Pressure', x=['BTTS Rate'], y=[btts['low_btts_rate']*100],
+                                      marker_color='red', text=[f"{btts['low_btts_rate']*100:.1f}%"],
+                                      textposition='outside')
+                            ])
+                            fig.update_layout(title=f"BTTS Rate by Pressure Flag (High: {btts['high_count']}, Low: {btts['low_count']})",
+                                             yaxis_title="Percentage")
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            diff = (btts['high_btts_rate'] - btts['low_btts_rate']) * 100
+                            if diff > 10:
+                                st.success(f"✅ BTTS Pressure Flag is working! +{diff:.1f}% difference")
+                            elif diff < -10:
+                                st.warning(f"⚠️ BTTS Pressure Flag is inverted! {diff:.1f}% difference")
+                            else:
+                                st.info(f"📊 BTTS Pressure Flag shows {diff:.1f}% difference")
+                        
+                        with col2:
+                            st.subheader("Overs Pressure Flag")
+                            overs = pressure_results['overs_pressure']
+                            
+                            fig = go.Figure(data=[
+                                go.Bar(name='High Pressure', x=['Over 2.5 Rate'], y=[overs['high_over_rate']*100],
+                                      marker_color='green', text=[f"{overs['high_over_rate']*100:.1f}%"],
+                                      textposition='outside'),
+                                go.Bar(name='Low Pressure', x=['Over 2.5 Rate'], y=[overs['low_over_rate']*100],
+                                      marker_color='red', text=[f"{overs['low_over_rate']*100:.1f}%"],
+                                      textposition='outside')
+                            ])
+                            fig.update_layout(title=f"Over 2.5 Rate by Pressure Flag (High: {overs['high_count']}, Low: {overs['low_count']})",
+                                             yaxis_title="Percentage")
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            diff = (overs['high_over_rate'] - overs['low_over_rate']) * 100
+                            if diff > 10:
+                                st.success(f"✅ Overs Pressure Flag is working! +{diff:.1f}% difference")
+                            elif diff < -10:
+                                st.warning(f"⚠️ Overs Pressure Flag is inverted! {diff:.1f}% difference")
+                            else:
+                                st.info(f"📊 Overs Pressure Flag shows {diff:.1f}% difference")
+                        
+                        st.markdown("---")
+                        
+                        col3, col4 = st.columns(2)
+                        
+                        with col3:
+                            st.subheader("Home Advantage Flag")
+                            home = pressure_results['home_advantage']
+                            
+                            fig = go.Figure(data=[
+                                go.Bar(name='Home Advantage', x=['Home Win Rate'], y=[home['adv_win_rate']*100],
+                                      marker_color='blue', text=[f"{home['adv_win_rate']*100:.1f}%"],
+                                      textposition='outside'),
+                                go.Bar(name='No Advantage', x=['Home Win Rate'], y=[home['no_adv_win_rate']*100],
+                                      marker_color='orange', text=[f"{home['no_adv_win_rate']*100:.1f}%"],
+                                      textposition='outside')
+                            ])
+                            fig.update_layout(title=f"Home Win Rate by Advantage Flag (Adv: {home['adv_count']}, No Adv: {home['no_adv_count']})",
+                                             yaxis_title="Percentage")
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        with col4:
+                            st.subheader("Importance Score Impact")
+                            imp = pressure_results['importance']
+                            
+                            fig = go.Figure(data=[
+                                go.Bar(name='High Importance', x=['Avg Goals'], y=[imp['high_avg_goals']],
+                                      marker_color='purple', text=[f"{imp['high_avg_goals']:.1f}"],
+                                      textposition='outside'),
+                                go.Bar(name='Low Importance', x=['Avg Goals'], y=[imp['low_avg_goals']],
+                                      marker_color='gray', text=[f"{imp['low_avg_goals']:.1f}"],
+                                      textposition='outside')
+                            ])
+                            fig.update_layout(title=f"Average Goals by Importance (High: {imp['high_count']}, Low: {imp['low_count']})",
+                                             yaxis_title="Goals")
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("Unable to calculate pressure test results")
                 else:
-                    st.info(f"📊 BTTS Pressure Flag shows {diff:.1f}% difference")
-            
-            with col2:
-                st.subheader("Overs Pressure Flag")
-                overs = pressure_results['overs_pressure']
-                
-                fig = go.Figure(data=[
-                    go.Bar(name='High Pressure', x=['Over 2.5 Rate'], y=[overs['high_over_rate']*100],
-                          marker_color='green', text=[f"{overs['high_over_rate']*100:.1f}%"],
-                          textposition='outside'),
-                    go.Bar(name='Low Pressure', x=['Over 2.5 Rate'], y=[overs['low_over_rate']*100],
-                          marker_color='red', text=[f"{overs['low_over_rate']*100:.1f}%"],
-                          textposition='outside')
-                ])
-                fig.update_layout(title=f"Over 2.5 Rate by Pressure Flag (High: {overs['high_count']}, Low: {overs['low_count']})",
-                                 yaxis_title="Percentage")
-                st.plotly_chart(fig, use_container_width=True)
-                
-                diff = (overs['high_over_rate'] - overs['low_over_rate']) * 100
-                if diff > 10:
-                    st.success(f"✅ Overs Pressure Flag is working! +{diff:.1f}% difference")
-                elif diff < -10:
-                    st.warning(f"⚠️ Overs Pressure Flag is inverted! {diff:.1f}% difference")
-                else:
-                    st.info(f"📊 Overs Pressure Flag shows {diff:.1f}% difference")
-            
-            st.markdown("---")
-            
-            col3, col4 = st.columns(2)
-            
-            with col3:
-                st.subheader("Home Advantage Flag")
-                home = pressure_results['home_advantage']
-                
-                fig = go.Figure(data=[
-                    go.Bar(name='Home Advantage', x=['Home Win Rate'], y=[home['adv_win_rate']*100],
-                          marker_color='blue', text=[f"{home['adv_win_rate']*100:.1f}%"],
-                          textposition='outside'),
-                    go.Bar(name='No Advantage', x=['Home Win Rate'], y=[home['no_adv_win_rate']*100],
-                          marker_color='orange', text=[f"{home['no_adv_win_rate']*100:.1f}%"],
-                          textposition='outside')
-                ])
-                fig.update_layout(title=f"Home Win Rate by Advantage Flag (Adv: {home['adv_count']}, No Adv: {home['no_adv_count']})",
-                                 yaxis_title="Percentage")
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col4:
-                st.subheader("Importance Score Impact")
-                imp = pressure_results['importance']
-                
-                fig = go.Figure(data=[
-                    go.Bar(name='High Importance', x=['Avg Goals'], y=[imp['high_avg_goals']],
-                          marker_color='purple', text=[f"{imp['high_avg_goals']:.1f}"],
-                          textposition='outside'),
-                    go.Bar(name='Low Importance', x=['Avg Goals'], y=[imp['low_avg_goals']],
-                          marker_color='gray', text=[f"{imp['low_avg_goals']:.1f}"],
-                          textposition='outside')
-                ])
-                fig.update_layout(title=f"Average Goals by Importance (High: {imp['high_count']}, Low: {imp['low_count']})",
-                                 yaxis_title="Goals")
-                st.plotly_chart(fig, use_container_width=True)
+                    st.info(f"Need at least 5 completed matches to run pressure tests. Currently have {completed_count}.")
+            except Exception as e:
+                st.error(f"Error in pressure test: {e}")
         else:
-            st.info("Add more completed matches (at least 5-10) to run pressure tests")
+            st.info("Supabase not connected")
 
 if __name__ == "__main__":
     main()
