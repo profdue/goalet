@@ -610,6 +610,7 @@ def main():
                         st.session_state['current_match_id'] = match_id
                         st.session_state['current_home'] = home_team
                         st.session_state['current_away'] = away_team
+                        st.session_state['match_saved'] = True
                         st.success(f"✅ Match saved to database (ID: {match_id})")
                         st.rerun()
         
@@ -648,11 +649,14 @@ def main():
                     if update_result(st.session_state['current_match_id'], home_goals, away_goals, notes):
                         st.success(f"✅ Result saved!")
                         st.balloons()
+                        # Clear all session state variables
                         del st.session_state['current_match_id']
-                        if 'current_home' in st.session_state:
-                            del st.session_state['current_home']
-                        if 'current_away' in st.session_state:
-                            del st.session_state['current_away']
+                        del st.session_state['current_home']
+                        del st.session_state['current_away']
+                        if 'match_saved' in st.session_state:
+                            del st.session_state['match_saved']
+                        if 'pending_match' in st.session_state:
+                            del st.session_state['pending_match']
                         st.rerun()
     
     with tab2:
