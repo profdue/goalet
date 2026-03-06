@@ -52,7 +52,7 @@ def save_match(match_input, home_team, away_team, league):
         return None
     
     try:
-        # Calculate tiers with FIXED thresholds (no tier 5)
+        # Calculate tiers with FIXED function (NO TIER 5)
         tiers = calculate_tiers_fixed(
             match_input['home_da'],
             match_input['away_da'],
@@ -61,6 +61,9 @@ def save_match(match_input, home_team, away_team, league):
             match_input['home_over'],
             match_input['away_over']
         )
+        
+        # DEBUG: Print tiers to verify
+        print(f"Tiers being saved: {tiers}")
         
         data = {
             'home_team': home_team.strip(),
@@ -73,12 +76,12 @@ def save_match(match_input, home_team, away_team, league):
             'away_btts': match_input['away_btts'],
             'home_over': match_input['home_over'],
             'away_over': match_input['away_over'],
-            'home_da_tier': tiers[0],
-            'away_da_tier': tiers[1],
-            'home_btts_tier': tiers[2],
-            'away_btts_tier': tiers[3],
-            'home_over_tier': tiers[4],
-            'away_over_tier': tiers[5],
+            'home_da_tier': tiers[0],  # Should be 4
+            'away_da_tier': tiers[1],  # Should be 4, not 5!
+            'home_btts_tier': tiers[2],  # Should be 4
+            'away_btts_tier': tiers[3],  # Should be 3
+            'home_over_tier': tiers[4],  # Should be 4
+            'away_over_tier': tiers[5],  # Should be 3
             'tier_signature': str(tiers),
             'elite': match_input.get('elite', False),
             'derby': match_input.get('derby', False),
@@ -92,7 +95,7 @@ def save_match(match_input, home_team, away_team, league):
     except Exception as e:
         st.error(f"Error saving to database: {e}")
         return None
-
+        
 def update_result(match_id, home_goals, away_goals, notes=""):
     """Update match with actual result"""
     
