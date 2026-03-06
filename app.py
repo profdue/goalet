@@ -41,7 +41,7 @@ else:
     supabase = None
 
 # ============================================================================
-# DATABASE FUNCTIONS (UPDATED)
+# DATABASE FUNCTIONS
 # ============================================================================
 
 def save_match(match_input, home_team, away_team, league):
@@ -52,6 +52,16 @@ def save_match(match_input, home_team, away_team, league):
         return None
     
     try:
+        # Calculate tiers with FIXED thresholds (no tier 5)
+        tiers = calculate_tiers_fixed(
+            match_input['home_da'],
+            match_input['away_da'],
+            match_input['home_btts'],
+            match_input['away_btts'],
+            match_input['home_over'],
+            match_input['away_over']
+        )
+        
         data = {
             'home_team': home_team.strip(),
             'away_team': away_team.strip(),
@@ -63,6 +73,13 @@ def save_match(match_input, home_team, away_team, league):
             'away_btts': match_input['away_btts'],
             'home_over': match_input['home_over'],
             'away_over': match_input['away_over'],
+            'home_da_tier': tiers[0],
+            'away_da_tier': tiers[1],
+            'home_btts_tier': tiers[2],
+            'away_btts_tier': tiers[3],
+            'home_over_tier': tiers[4],
+            'away_over_tier': tiers[5],
+            'tier_signature': str(tiers),
             'elite': match_input.get('elite', False),
             'derby': match_input.get('derby', False),
             'relegation': match_input.get('relegation', False),
@@ -84,10 +101,6 @@ def update_result(match_id, home_goals, away_goals, notes=""):
         return False
     
     try:
-        # Calculate derived fields
-        total_goals = home_goals + away_goals
-        btts = (home_goals > 0 and away_goals > 0)
-        
         data = {
             'home_goals': home_goals,
             'away_goals': away_goals,
@@ -318,6 +331,9 @@ def get_pressure_test_results():
         
         matches = result.data
         
+        if len(matches) < 5:
+            return {}
+        
         # BTTS Pressure analysis
         btts_high = [m for m in matches if m.get('btts_pressure_flag', False)]
         btts_low = [m for m in matches if not m.get('btts_pressure_flag', False)]
@@ -367,32 +383,29 @@ def get_pressure_test_results():
         return {}
 
 # ============================================================================
-# TIER FUNCTIONS
+# TIER FUNCTIONS - FIXED VERSION (No Tier 5)
 # ============================================================================
 
-def calculate_tiers(home_da, away_da, home_btts, away_btts, home_over, away_over):
-    """Calculate tiers manually"""
+def calculate_tiers_fixed(home_da, away_da, home_btts, away_btts, home_over, away_over):
+    """Calculate tiers manually - FIXED to only return 1-4"""
     
     def da_tier(da):
-        if da >= 80: return 1
-        if da >= 65: return 2
-        if da >= 50: return 3
-        if da >= 35: return 4
-        return 5
+        if da >= 70: return 1
+        if da >= 55: return 2
+        if da >= 40: return 3
+        return 4  # Everything below 40 is tier 4
     
     def btts_tier(btts):
         if btts >= 65: return 1
         if btts >= 55: return 2
         if btts >= 45: return 3
-        if btts >= 35: return 4
-        return 5
+        return 4  # Everything below 45 is tier 4
     
     def over_tier(over):
         if over >= 65: return 1
         if over >= 55: return 2
         if over >= 45: return 3
-        if over >= 35: return 4
-        return 5
+        return 4  # Everything below 45 is tier 4
     
     return [
         da_tier(home_da),
@@ -405,24 +418,24 @@ def calculate_tiers(home_da, away_da, home_btts, away_btts, home_over, away_over
 
 def tier_to_emoji(tier, category):
     emojis = {
-        'da': ["💥", "⚡", "📊", "🐢", "🛡️"],
-        'btts': ["🎯", "⚽", "🤔", "🧤", "🚫"],
-        'over': ["🔥", "📈", "⚖️", "📉", "💤"]
+        'da': ["💥", "⚡", "📊", "🐢"],
+        'btts': ["🎯", "⚽", "🤔", "🧤"],
+        'over': ["🔥", "📈", "⚖️", "📉"]
     }
     return emojis[category][tier-1]
 
 def get_tier_description(tier, category):
     """Get text description of tier"""
     if category == 'da':
-        descriptions = ["Elite Attack", "Strong Attack", "Average Attack", "Weak Attack", "Defensive Shell"]
+        descriptions = ["Elite Attack", "Strong Attack", "Average Attack", "Weak Attack"]
     elif category == 'btts':
-        descriptions = ["Always Scores", "Usually Scores", "50/50", "Rarely Scores", "Never Scores"]
+        descriptions = ["Always Scores", "Usually Scores", "50/50", "Rarely Scores"]
     else:
-        descriptions = ["Goal Fest", "Goals Likely", "50/50", "Goals Unlikely", "Dead Game"]
+        descriptions = ["Goal Fest", "Goals Likely", "50/50", "Goals Unlikely"]
     return descriptions[tier-1]
 
 # ============================================================================
-# PREDICTION FUNCTIONS (ENHANCED)
+# PREDICTION FUNCTIONS
 # ============================================================================
 
 def generate_prediction(tiers, history_matches, league, counter_threats=None):
@@ -545,19 +558,21 @@ def main():
                 
                 # Quick pressure test summary
                 pressure_results = get_pressure_test_results()
-                if pressure_results:
+                if pressure_results and len(pressure_results) > 0:
                     st.subheader("🎯 Pressure Test")
                     btts_diff = pressure_results['btts_pressure']['high_btts_rate'] - pressure_results['btts_pressure']['low_btts_rate']
                     st.metric("BTTS Flag Accuracy", f"{btts_diff*100:.0f}% better")
+                else:
+                    st.info("Add more matches for pressure tests")
             except Exception as e:
                 st.info("No matches in database yet")
         else:
             st.info("Supabase not connected")
         
         st.markdown("---")
-        st.markdown("**Tiers:** 1💥 2⚡ 3📊 4🐢 5🛡️")
+        st.markdown("**Tiers:** 1💥 2⚡ 3📊 4🐢")
     
-    # Main tabs - ADDED NEW TAB
+    # Main tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Predict", "🔍 Discover Patterns", "📊 League Stats", "⚠️ Counter Threats", "🎯 Pressure Test"])
     
     with tab1:
@@ -571,17 +586,17 @@ def main():
                 
                 with col1:
                     st.markdown("**🏠 HOME**")
-                    home_team = st.text_input("Home Team", "Bayern")
-                    home_da = st.number_input("DA", 0, 100, 60)
-                    home_btts = st.number_input("BTTS %", 0, 100, 52)
-                    home_over = st.number_input("Over %", 0, 100, 57)
+                    home_team = st.text_input("Home Team", "Parma")
+                    home_da = st.number_input("DA", 0, 100, 39)
+                    home_btts = st.number_input("BTTS %", 0, 100, 38)
+                    home_over = st.number_input("Over %", 0, 100, 35)
                 
                 with col2:
                     st.markdown("**✈️ AWAY**")
-                    away_team = st.text_input("Away Team", "Dortmund")
-                    away_da = st.number_input("DA", 0, 100, 68, key="away_da")
-                    away_btts = st.number_input("BTTS %", 0, 100, 61, key="away_btts")
-                    away_over = st.number_input("Over %", 0, 100, 100, key="away_over")
+                    away_team = st.text_input("Away Team", "Cagliari")
+                    away_da = st.number_input("DA", 0, 100, 29, key="away_da")
+                    away_btts = st.number_input("BTTS %", 0, 100, 46, key="away_btts")
+                    away_over = st.number_input("Over %", 0, 100, 46, key="away_over")
                 
                 col3, col4, col5 = st.columns(3)
                 with col3:
@@ -591,115 +606,112 @@ def main():
                 with col5:
                     relegation = st.checkbox("⚠️ Relegation")
                 
-                league = st.text_input("League", "BUNDESLIGA")
-                submitted = st.form_submit_button("🎯 SAVE MATCH", use_container_width=True)
+                league = st.text_input("League", "SERIE A")
+                submitted = st.form_submit_button("🎯 GENERATE PREDICTION", use_container_width=True)
         
         with col_result:
-            st.subheader("📚 Enter Actual Result")
-            
-            if 'current_match_id' in st.session_state:
-                st.info(f"Match ID: {st.session_state['current_match_id']}")
+            if submitted:
+                match_input = {
+                    'home_da': home_da,
+                    'away_da': away_da,
+                    'home_btts': home_btts,
+                    'away_btts': away_btts,
+                    'home_over': home_over,
+                    'away_over': away_over,
+                    'elite': elite,
+                    'derby': derby,
+                    'relegation': relegation
+                }
                 
-                with st.form("result_input"):
-                    col_r1, col_r2 = st.columns(2)
-                    
-                    with col_r1:
-                        home_goals = st.number_input(f"{home_team} Goals", 0, 10, 0, key="home_goals")
-                    
-                    with col_r2:
-                        away_goals = st.number_input(f"{away_team} Goals", 0, 10, 0, key="away_goals")
-                    
-                    notes = st.text_input("Notes (penalty, red card, etc.)", "")
-                    
-                    # Show preview
-                    total_goals = home_goals + away_goals
-                    btts = "✅ YES" if (home_goals > 0 and away_goals > 0) else "❌ NO"
-                    over = "✅ YES" if total_goals >= 3 else "❌ NO"
-                    
-                    st.markdown(f"""
-                    **Preview:**
-                    - Score: {home_goals} - {away_goals}
-                    - Total Goals: {total_goals}
-                    - BTTS: {btts}
-                    - Over 2.5: {over}
-                    """)
-                    
-                    submitted_result = st.form_submit_button("📥 SAVE RESULT", use_container_width=True)
-                    
-                    if submitted_result:
-                        if update_result(st.session_state['current_match_id'], home_goals, away_goals, notes):
-                            st.success(f"✅ Result saved!")
-                            st.balloons()
-                            del st.session_state['current_match_id']
-                            st.rerun()
-            else:
-                st.info("Save a match first to enter results")
-        
-        if submitted:
-            match_input = {
-                'home_da': home_da,
-                'away_da': away_da,
-                'home_btts': home_btts,
-                'away_btts': away_btts,
-                'home_over': home_over,
-                'away_over': away_over,
-                'elite': elite,
-                'derby': derby,
-                'relegation': relegation
-            }
-            
-            # Calculate tiers
-            tiers = calculate_tiers(home_da, away_da, home_btts, away_btts, home_over, away_over)
-            
-            # Display tiers with descriptions
-            st.subheader("🎯 Tier Signature")
-            cols = st.columns(6)
-            labels = ['H-DA', 'A-DA', 'H-BTTS', 'A-BTTS', 'H-OVER', 'A-OVER']
-            cats = ['da', 'da', 'btts', 'btts', 'over', 'over']
-            
-            for i, (col, label, cat) in enumerate(zip(cols, labels, cats)):
-                emoji = tier_to_emoji(tiers[i], cat)
-                desc = get_tier_description(tiers[i], cat)
-                col.metric(label, f"{emoji} {tiers[i]}", help=desc)
-            
-            # Check historical patterns
-            tier_sig = str(tiers)
-            history = get_pattern_history(tier_sig, league)
-            
-            if history:
-                st.subheader("📊 Historical Pattern")
-                total = len(history)
-                overs = sum(1 for m in history if m.get('actual_goals', 0) >= 3)
-                unders = total - overs
-                btts_yes = sum(1 for m in history if m.get('actual_btts', False))
-                btts_no = total - btts_yes
+                # Calculate tiers with FIXED function
+                tiers = calculate_tiers_fixed(home_da, away_da, home_btts, away_btts, home_over, away_over)
                 
-                col_h1, col_h2, col_h3, col_h4 = st.columns(4)
-                col_h1.metric("Total Matches", total)
-                col_h2.metric("Over 2.5", f"{overs}/{total} ({overs/total*100:.0f}%)")
-                col_h3.metric("Under 2.5", f"{unders}/{total} ({unders/total*100:.0f}%)")
-                col_h4.metric("Avg Goals", f"{sum(m.get('actual_goals', 0) for m in history)/total:.1f}")
+                # Display tiers
+                st.subheader("🎯 Tier Signature")
+                cols = st.columns(6)
+                labels = ['H-DA', 'A-DA', 'H-BTTS', 'A-BTTS', 'H-OVER', 'A-OVER']
+                cats = ['da', 'da', 'btts', 'btts', 'over', 'over']
                 
-                col_b1, col_b2 = st.columns(2)
-                col_b1.metric("BTTS Yes", f"{btts_yes}/{total} ({btts_yes/total*100:.0f}%)")
-                col_b2.metric("BTTS No", f"{btts_no}/{total} ({btts_no/total*100:.0f}%)")
+                for i, (col, label, cat) in enumerate(zip(cols, labels, cats)):
+                    emoji = tier_to_emoji(tiers[i], cat)
+                    desc = get_tier_description(tiers[i], cat)
+                    col.metric(label, f"{emoji} {tiers[i]}", help=desc)
                 
-                # Show recent examples
-                with st.expander("View historical matches"):
-                    for m in history[:5]:
-                        score = f"{m.get('home_goals', '?')}-{m.get('away_goals', '?')}"
-                        btts_icon = "✅" if m.get('actual_btts') else "❌"
-                        over_icon = "🔥" if m.get('actual_goals', 0) >= 3 else "📉"
-                        st.text(f"• {m['home_team']} {score} {m['away_team']} | {btts_icon} BTTS | {over_icon} {m.get('actual_goals', 0)} goals")
-            else:
-                st.info("🆕 No historical matches with this exact pattern yet")
-            
-            # Save to database
-            match_id = save_match(match_input, home_team, away_team, league)
-            
-            if match_id:
-                st.session_state['current_match_id'] = match_id
-                st.success(f"✅ Match saved to Supabase (ID: {match_id})")
+                # Check historical patterns
+                tier_sig = str(tiers)
+                history = get_pattern_history(tier_sig, league)
+                
+                if history:
+                    st.subheader("📊 Historical Pattern")
+                    total = len(history)
+                    overs = sum(1 for m in history if m.get('actual_goals', 0) >= 3)
+                    unders = total - overs
+                    btts_yes = sum(1 for m in history if m.get('actual_btts', False))
+                    btts_no = total - btts_yes
+                    
+                    col_h1, col_h2, col_h3, col_h4 = st.columns(4)
+                    col_h1.metric("Total Matches", total)
+                    col_h2.metric("Over 2.5", f"{overs}/{total} ({overs/total*100:.0f}%)")
+                    col_h3.metric("Under 2.5", f"{unders}/{total} ({unders/total*100:.0f}%)")
+                    col_h4.metric("Avg Goals", f"{sum(m.get('actual_goals', 0) for m in history)/total:.1f}")
+                    
+                    col_b1, col_b2 = st.columns(2)
+                    col_b1.metric("BTTS Yes", f"{btts_yes}/{total} ({btts_yes/total*100:.0f}%)")
+                    col_b2.metric("BTTS No", f"{btts_no}/{total} ({btts_no/total*100:.0f}%)")
+                else:
+                    st.info("🆕 No historical matches with this exact pattern yet")
+                
+                # Save to database IMMEDIATELY
+                match_id = save_match(match_input, home_team, away_team, league)
+                
+                if match_id:
+                    st.session_state['current_match_id'] = match_id
+                    st.session_state['current_home'] = home_team
+                    st.session_state['current_away'] = away_team
+                    st.success(f"✅ Match saved (ID: {match_id})")
+                    
+                    # Show result entry form IMMEDIATELY below
+                    st.markdown("---")
+                    st.subheader("📥 ENTER ACTUAL RESULT NOW")
+                    
+                    with st.form("result_input_immediate"):
+                        col_r1, col_r2 = st.columns(2)
+                        
+                        with col_r1:
+                            home_goals = st.number_input(f"{home_team} Goals", 0, 10, 0, key="home_goals_immediate")
+                        
+                        with col_r2:
+                            away_goals = st.number_input(f"{away_team} Goals", 0, 10, 0, key="away_goals_immediate")
+                        
+                        notes = st.text_input("Notes (penalty, red card, etc.)", "")
+                        
+                        # Show preview
+                        total_goals = home_goals + away_goals
+                        btts = "✅ YES" if (home_goals > 0 and away_goals > 0) else "❌ NO"
+                        over = "✅ YES" if total_goals >= 3 else "❌ NO"
+                        
+                        st.markdown(f"""
+                        **Preview:**
+                        - Score: {home_goals} - {away_goals}
+                        - Total Goals: {total_goals}
+                        - BTTS: {btts}
+                        - Over 2.5: {over}
+                        """)
+                        
+                        submitted_result = st.form_submit_button("📥 SAVE RESULT", use_container_width=True)
+                        
+                        if submitted_result:
+                            if update_result(match_id, home_goals, away_goals, notes):
+                                st.success(f"✅ Result saved!")
+                                st.balloons()
+                                # Clear session state
+                                if 'current_match_id' in st.session_state:
+                                    del st.session_state['current_match_id']
+                                if 'current_home' in st.session_state:
+                                    del st.session_state['current_home']
+                                if 'current_away' in st.session_state:
+                                    del st.session_state['current_away']
+                                st.rerun()
     
     with tab2:
         st.header("🔍 Pattern Discovery")
@@ -849,7 +861,7 @@ def main():
         
         pressure_results = get_pressure_test_results()
         
-        if pressure_results:
+        if pressure_results and pressure_results.get('btts_pressure', {}).get('high_count', 0) > 0:
             col1, col2 = st.columns(2)
             
             with col1:
@@ -872,9 +884,9 @@ def main():
                 if diff > 10:
                     st.success(f"✅ BTTS Pressure Flag is working! +{diff:.1f}% difference")
                 elif diff < -10:
-                    st.error(f"❌ BTTS Pressure Flag is inverted! {diff:.1f}% difference")
+                    st.warning(f"⚠️ BTTS Pressure Flag is inverted! {diff:.1f}% difference - consider fading")
                 else:
-                    st.info(f"📊 BTTS Pressure Flag shows {diff:.1f}% difference")
+                    st.info(f"📊 BTTS Pressure Flag shows {diff:.1f}% difference (needs more data)")
             
             with col2:
                 st.subheader("Overs Pressure Flag")
@@ -896,9 +908,9 @@ def main():
                 if diff > 10:
                     st.success(f"✅ Overs Pressure Flag is working! +{diff:.1f}% difference")
                 elif diff < -10:
-                    st.error(f"❌ Overs Pressure Flag is inverted! {diff:.1f}% difference")
+                    st.warning(f"⚠️ Overs Pressure Flag is inverted! {diff:.1f}% difference - consider fading")
                 else:
-                    st.info(f"📊 Overs Pressure Flag shows {diff:.1f}% difference")
+                    st.info(f"📊 Overs Pressure Flag shows {diff:.1f}% difference (needs more data)")
             
             st.markdown("---")
             
@@ -923,6 +935,8 @@ def main():
                 diff = (home['adv_win_rate'] - home['no_adv_win_rate']) * 100
                 if diff > 10:
                     st.success(f"✅ Home Advantage Flag is working! +{diff:.1f}% difference")
+                else:
+                    st.info(f"📊 Home Advantage shows {diff:.1f}% difference")
             
             with col4:
                 st.subheader("Importance Score Impact")
@@ -943,30 +957,51 @@ def main():
                 diff = imp['high_avg_goals'] - imp['low_avg_goals']
                 if diff > 0.5:
                     st.success(f"✅ Importance matters! +{diff:.1f} more goals")
+                elif diff > 0:
+                    st.info(f"📊 Importance shows +{diff:.1f} more goals")
+                else:
+                    st.warning("⚠️ Importance doesn't impact goals yet")
             
-            # Overall assessment
+            # Overall assessment with sample size warning
             st.markdown("---")
             st.subheader("📋 Overall Assessment")
+            
+            total_matches = pressure_results['btts_pressure']['high_count'] + pressure_results['btts_pressure']['low_count']
+            
+            if total_matches < 30:
+                st.warning(f"⚠️ Small sample size ({total_matches} matches). Patterns may be noise. Continue collecting data.")
             
             metrics = []
             if (pressure_results['btts_pressure']['high_btts_rate'] > 
                 pressure_results['btts_pressure']['low_btts_rate']):
                 metrics.append("✅ BTTS Pressure: Good")
+            else:
+                metrics.append("🔄 BTTS Pressure: Inverted")
+                
             if (pressure_results['overs_pressure']['high_over_rate'] > 
                 pressure_results['overs_pressure']['low_over_rate']):
                 metrics.append("✅ Overs Pressure: Good")
+            else:
+                metrics.append("🔄 Overs Pressure: Inverted")
+                
             if (pressure_results['home_advantage']['adv_win_rate'] > 
                 pressure_results['home_advantage']['no_adv_win_rate']):
                 metrics.append("✅ Home Advantage: Good")
             
-            if len(metrics) >= 3:
-                st.success("🎯 All flags are performing as expected!")
-            elif len(metrics) >= 2:
-                st.info("📊 Most flags are working well")
+            if pressure_results['importance']['high_avg_goals'] > pressure_results['importance']['low_avg_goals']:
+                metrics.append("✅ Importance: Working")
+            
+            for metric in metrics:
+                st.text(metric)
+            
+            if len([m for m in metrics if "✅" in m]) >= 3:
+                st.success("🎯 Most flags are performing as expected!")
+            elif len([m for m in metrics if "🔄" in m]) > 0:
+                st.info("📊 Some flags are inverted - could be used as fade signals")
             else:
-                st.warning("⚠️ Flags need calibration - collect more data")
+                st.info("📊 Keep collecting data - patterns will emerge")
         else:
-            st.info("Add more completed matches to run pressure tests")
+            st.info("Add more completed matches (at least 5-10) to run pressure tests")
 
 if __name__ == "__main__":
     main()
