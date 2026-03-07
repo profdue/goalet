@@ -16,7 +16,7 @@ except ImportError:
 
 # Page config
 st.set_page_config(
-    page_title="Mismatch Hunter v14.0",
+    page_title="Mismatch Hunter v15.0",
     page_icon="🎯",
     layout="wide"
 )
@@ -115,6 +115,32 @@ def save_match(match_input, home_team, away_team, league, home_goals=None, away_
             match_input['away_over']
         )
         
+        # Calculate the new improved pressure flags
+        home_advantage_flag = tiers[0] < tiers[1]  # home_da_tier < away_da_tier
+        
+        # NEW BTTS PRESSURE FLAG FORMULA
+        # (home good offense vs away weak defense) OR (away good offense vs home weak defense) OR (elite/derby)
+        btts_pressure_flag = (
+            (tiers[2] <= 2 and tiers[1] >= 3) or  # home_btts_tier <=2 and away_da_tier >=3
+            (tiers[3] <= 2 and tiers[0] >= 3) or  # away_btts_tier <=2 and home_da_tier >=3
+            match_input.get('elite', False) or 
+            match_input.get('derby', False)
+        )
+        
+        # NEW OVERS PRESSURE FLAG FORMULA
+        # (home over threat vs away weak defense) OR (away over threat vs home weak defense)
+        overs_pressure_flag = (
+            (tiers[4] <= 2 and tiers[1] >= 3) or  # home_over_tier <=2 and away_da_tier >=3
+            (tiers[5] <= 2 and tiers[0] >= 3)     # away_over_tier <=2 and home_da_tier >=3
+        )
+        
+        # Importance score
+        importance_score = (
+            (1 if match_input.get('elite', False) else 0) +
+            (1 if match_input.get('derby', False) else 0) +
+            (1 if match_input.get('relegation', False) else 0)
+        )
+        
         data = {
             'home_team': home_team.strip(),
             'away_team': away_team.strip(),
@@ -137,7 +163,11 @@ def save_match(match_input, home_team, away_team, league, home_goals=None, away_
             'derby': match_input.get('derby', False),
             'relegation': match_input.get('relegation', False),
             'result_entered': home_goals is not None and away_goals is not None,
-            'data_quality_flag': False
+            'data_quality_flag': False,
+            'home_advantage_flag': home_advantage_flag,
+            'btts_pressure_flag': btts_pressure_flag,
+            'overs_pressure_flag': overs_pressure_flag,
+            'importance_score': importance_score
         }
         
         # Add result if provided
@@ -373,7 +403,7 @@ def generate_prediction(history_matches):
 # ============================================================================
 
 def main():
-    st.title("🎯 Mismatch Hunter v14.0")
+    st.title("🎯 Mismatch Hunter v15.0")
     st.markdown("### Complete Pattern Tracking with Advanced Analytics")
     
     if not SUPABASE_AVAILABLE:
@@ -420,6 +450,7 @@ def main():
         
         st.markdown("---")
         st.markdown("**Tiers:** 1💥 2⚡ 3📊 4🐢")
+        st.markdown("**New Formula:** BTTS when good offense meets weak defense")
     
     # Main tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Predict", "🔍 Discover Patterns", "📊 League Stats", "⚠️ Counter Threats", "🎯 Pressure Test"])
@@ -497,6 +528,32 @@ def main():
                 emoji = tier_to_emoji(tiers[i], cat)
                 desc = get_tier_description(tiers[i], cat)
                 col.metric(label, f"{emoji} TIER {tiers[i]}", help=desc)
+            
+            # Show the new pressure flags
+            col_f1, col_f2, col_f3 = st.columns(3)
+            
+            # Calculate flags for display
+            home_adv_flag = tiers[0] < tiers[1]
+            
+            # New BTTS formula
+            btts_flag = (
+                (tiers[2] <= 2 and tiers[1] >= 3) or
+                (tiers[3] <= 2 and tiers[0] >= 3) or
+                elite or derby
+            )
+            
+            # New Overs formula
+            overs_flag = (
+                (tiers[4] <= 2 and tiers[1] >= 3) or
+                (tiers[5] <= 2 and tiers[0] >= 3)
+            )
+            
+            col_f1.metric("Home Advantage", "✅" if home_adv_flag else "❌", 
+                         help="home_da_tier < away_da_tier")
+            col_f2.metric("BTTS Pressure (New)", "✅" if btts_flag else "❌",
+                         help="Good offense vs weak defense OR Elite/Derby")
+            col_f3.metric("Overs Pressure (New)", "✅" if overs_flag else "❌",
+                         help="High over threat vs weak defense")
             
             # Check historical patterns
             tier_sig = str(tiers)
@@ -706,6 +763,7 @@ def main():
     with tab5:
         st.header("🎯 Pressure Test")
         st.markdown("### How well do our computed flags predict outcomes?")
+        st.markdown("**New Formula:** Good offense vs weak defense OR Elite/Derby")
         
         if supabase:
             try:
@@ -719,7 +777,7 @@ def main():
                         col1, col2 = st.columns(2)
                         
                         with col1:
-                            st.subheader("BTTS Pressure Flag")
+                            st.subheader("BTTS Pressure Flag (New Formula)")
                             btts = pressure_results['btts_pressure']
                             
                             fig = go.Figure(data=[
@@ -743,7 +801,7 @@ def main():
                                 st.info(f"📊 BTTS Pressure Flag shows {diff:.1f}% difference")
                         
                         with col2:
-                            st.subheader("Overs Pressure Flag")
+                            st.subheader("Overs Pressure Flag (New Formula)")
                             overs = pressure_results['overs_pressure']
                             
                             fig = go.Figure(data=[
