@@ -4,7 +4,7 @@ import numpy as np
 from datetime import datetime
 import plotly.graph_objects as go
 import plotly.express as px
-import re
+import json
 
 # Try to import supabase with error handling
 try:
@@ -95,6 +95,116 @@ def get_tier_description(tier, category):
     return descriptions[tier-1]
 
 # ============================================================================
+# DISCOVERY RULES FUNCTIONS
+# ============================================================================
+
+def check_discovery_rules(match):
+    """Check which discovery rules apply to a match"""
+    if not match.get('result_entered'):
+        return {}
+    
+    home_goals = match.get('home_goals', 0) or 0
+    away_goals = match.get('away_goals', 0) or 0
+    total_goals = home_goals + away_goals
+    
+    rules = {}
+    
+    # Rule 1: [4,4] Opening = ≤2 Goals
+    if match.get('home_da_tier') == 4 and match.get('away_da_tier') == 4:
+        rules['rule_1'] = {
+            'name': '[4,4] Opening = ≤2 Goals',
+            'hit': total_goals <= 2
+        }
+    
+    # Rule 2: away_btts_tier = 1 = Winner
+    if match.get('away_btts_tier') == 1:
+        rules['rule_2'] = {
+            'name': 'away_btts_tier = 1 = Winner',
+            'hit': home_goals != away_goals
+        }
+    
+    # Rule 3: Importance 2 = ≥3 Goals
+    if match.get('importance_score', 0) == 2:
+        rules['rule_3'] = {
+            'name': 'Importance 2 = ≥3 Goals',
+            'hit': total_goals >= 3
+        }
+    
+    # Rule 4: Sum = 22 = Exactly 2 Goals
+    tier_sum = sum([
+        match.get('home_da_tier', 0) or 0,
+        match.get('away_da_tier', 0) or 0,
+        match.get('home_btts_tier', 0) or 0,
+        match.get('away_btts_tier', 0) or 0,
+        match.get('home_over_tier', 0) or 0,
+        match.get('away_over_tier', 0) or 0
+    ])
+    if tier_sum == 22:
+        rules['rule_4'] = {
+            'name': 'Sum = 22 = Exactly 2 Goals',
+            'hit': total_goals == 2
+        }
+    
+    # Rule 5: home_advantage_flag = No Draw
+    if match.get('home_advantage_flag', False):
+        rules['rule_5'] = {
+            'name': 'Home Advantage Flag = No Draw',
+            'hit': home_goals != away_goals
+        }
+    
+    # Rule 6: away_btts_tier = 1 OR (away_btts_tier = 2 AND home_btts_tier ≠ 2)
+    if (match.get('away_btts_tier') == 1) or \
+       (match.get('away_btts_tier') == 2 and match.get('home_btts_tier') != 2):
+        rules['rule_6'] = {
+            'name': 'Away BTTS Elite = Winner',
+            'hit': home_goals != away_goals
+        }
+    
+    # Rule 7: Mixed Defense [4,3] or [3,4] = Winner
+    defenses = (match.get('home_da_tier'), match.get('away_da_tier'))
+    if defenses in [(4,3), (3,4)]:
+        rules['rule_7'] = {
+            'name': 'Mixed Defense = Winner',
+            'hit': home_goals != away_goals
+        }
+    
+    # Rule 8: Both DA ≤ 45 = Under 2.5
+    if (match.get('home_da', 0) or 0) <= 45 and (match.get('away_da', 0) or 0) <= 45:
+        rules['rule_8'] = {
+            'name': 'Both DA ≤ 45 = Under 2.5',
+            'hit': total_goals <= 2
+        }
+    
+    # Rule 9: Both DA ≥ 50 = Goals
+    if (match.get('home_da', 0) or 0) >= 50 and (match.get('away_da', 0) or 0) >= 50:
+        rules['rule_9'] = {
+            'name': 'Both DA ≥ 50 = Goals (3+ avg)',
+            'hit': total_goals >= 3
+        }
+    
+    # Rule 10: away_da ≥ 55 = Away Result
+    if (match.get('away_da', 0) or 0) >= 55:
+        rules['rule_10'] = {
+            'name': 'away_da ≥ 55 = Away Wins/Draws',
+            'hit': away_goals >= home_goals
+        }
+    
+    return rules
+
+def update_rule_hits(match_id, rules):
+    """Update rule_hits JSONB column for a match"""
+    if supabase is None:
+        return
+    
+    try:
+        supabase.table('matches')\
+            .update({'rule_hits': json.dumps(rules)})\
+            .eq('id', match_id)\
+            .execute()
+    except Exception as e:
+        st.error(f"Error updating rule hits: {e}")
+
+# ============================================================================
 # DATABASE FUNCTIONS
 # ============================================================================
 
@@ -115,23 +225,21 @@ def save_match(match_input, home_team, away_team, league, home_goals=None, away_
             match_input['away_over']
         )
         
-        # Calculate the new improved pressure flags
-        home_advantage_flag = tiers[0] < tiers[1]  # home_da_tier < away_da_tier
+        # Calculate flags
+        home_advantage_flag = tiers[0] < tiers[1]
         
-        # NEW BTTS PRESSURE FLAG FORMULA
-        # (home good offense vs away weak defense) OR (away good offense vs home weak defense) OR (elite/derby)
+        # NEW BTTS PRESSURE FLAG FORMULA (Discovery-based)
         btts_pressure_flag = (
-            (tiers[2] <= 2 and tiers[1] >= 3) or  # home_btts_tier <=2 and away_da_tier >=3
-            (tiers[3] <= 2 and tiers[0] >= 3) or  # away_btts_tier <=2 and home_da_tier >=3
+            (tiers[2] <= 2 and tiers[1] >= 3) or  # home good offense vs away weak defense
+            (tiers[3] <= 2 and tiers[0] >= 3) or  # away good offense vs home weak defense
             match_input.get('elite', False) or 
             match_input.get('derby', False)
         )
         
         # NEW OVERS PRESSURE FLAG FORMULA
-        # (home over threat vs away weak defense) OR (away over threat vs home weak defense)
         overs_pressure_flag = (
-            (tiers[4] <= 2 and tiers[1] >= 3) or  # home_over_tier <=2 and away_da_tier >=3
-            (tiers[5] <= 2 and tiers[0] >= 3)     # away_over_tier <=2 and home_da_tier >=3
+            (tiers[4] <= 2 and tiers[1] >= 3) or  # home over threat vs away weak defense
+            (tiers[5] <= 2 and tiers[0] >= 3)     # away over threat vs home weak defense
         )
         
         # Importance score
@@ -167,7 +275,10 @@ def save_match(match_input, home_team, away_team, league, home_goals=None, away_
             'home_advantage_flag': home_advantage_flag,
             'btts_pressure_flag': btts_pressure_flag,
             'overs_pressure_flag': overs_pressure_flag,
-            'importance_score': importance_score
+            'importance_score': importance_score,
+            'is_home': True,  # Default to True, can be overridden
+            'rule_hits': None,
+            'discovery_notes': notes if notes else None
         }
         
         # Add result if provided
@@ -177,10 +288,49 @@ def save_match(match_input, home_team, away_team, league, home_goals=None, away_
             data['notes'] = notes
         
         result = supabase.table('matches').insert(data).execute()
-        return result.data[0]['id']
+        match_id = result.data[0]['id']
+        
+        # If result was provided, check discovery rules
+        if home_goals is not None and away_goals is not None:
+            match_data = data.copy()
+            match_data['id'] = match_id
+            rules = check_discovery_rules(match_data)
+            if rules:
+                update_rule_hits(match_id, rules)
+        
+        return match_id
     except Exception as e:
         st.error(f"Error saving to database: {e}")
         return None
+
+def update_result(match_id, home_goals, away_goals, notes=""):
+    """Update match with actual result"""
+    
+    if supabase is None:
+        st.error("Supabase not connected")
+        return False
+    
+    try:
+        data = {
+            'home_goals': home_goals,
+            'away_goals': away_goals,
+            'result_entered': True,
+            'notes': notes
+        }
+        
+        supabase.table('matches').update(data).eq('id', match_id).execute()
+        
+        # Get the updated match to check rules
+        result = supabase.table('matches').select('*').eq('id', match_id).execute()
+        if result.data:
+            rules = check_discovery_rules(result.data[0])
+            if rules:
+                update_rule_hits(match_id, rules)
+        
+        return True
+    except Exception as e:
+        st.error(f"Error updating result: {e}")
+        return False
 
 def safe_get(value, default=0):
     """Safely get value, return default if None"""
@@ -356,6 +506,38 @@ def get_pressure_test_results():
         st.error(f"Error running pressure tests: {e}")
         return {}
 
+def get_discovery_stats():
+    """Get statistics on discovery rules"""
+    if supabase is None:
+        return {}
+    
+    try:
+        result = supabase.table('matches')\
+            .select('*')\
+            .eq('result_entered', True)\
+            .execute()
+        matches = result.data
+        
+        rule_stats = {}
+        for match in matches:
+            rules = match.get('rule_hits')
+            if rules:
+                for rule_key, rule_data in rules.items():
+                    if rule_key not in rule_stats:
+                        rule_stats[rule_key] = {
+                            'name': rule_data['name'],
+                            'total': 0,
+                            'hits': 0
+                        }
+                    rule_stats[rule_key]['total'] += 1
+                    if rule_data['hit']:
+                        rule_stats[rule_key]['hits'] += 1
+        
+        return rule_stats
+    except Exception as e:
+        st.error(f"Error getting discovery stats: {e}")
+        return {}
+
 # ============================================================================
 # PREDICTION FUNCTIONS
 # ============================================================================
@@ -404,7 +586,7 @@ def generate_prediction(history_matches):
 
 def main():
     st.title("🎯 Mismatch Hunter v15.0")
-    st.markdown("### Complete Pattern Tracking with Advanced Analytics")
+    st.markdown("### Complete Pattern Tracking with Discovery Engine")
     
     if not SUPABASE_AVAILABLE:
         st.warning("⚠️ Supabase not installed. Run: `pip install supabase` to enable database features")
@@ -450,10 +632,17 @@ def main():
         
         st.markdown("---")
         st.markdown("**Tiers:** 1💥 2⚡ 3📊 4🐢")
-        st.markdown("**New Formula:** BTTS when good offense meets weak defense")
+        st.markdown("**Discovery Rules:** Tracked in tab 6")
     
-    # Main tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Predict", "🔍 Discover Patterns", "📊 League Stats", "⚠️ Counter Threats", "🎯 Pressure Test"])
+    # Main tabs - ADDED DISCOVERY TAB
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📋 Predict", 
+        "🔍 Discover Patterns", 
+        "📊 League Stats", 
+        "⚠️ Counter Threats", 
+        "🎯 Pressure Test",
+        "📈 Discovery Engine"
+    ])
     
     with tab1:
         st.subheader("📋 Enter Match Data")
@@ -529,7 +718,7 @@ def main():
                 desc = get_tier_description(tiers[i], cat)
                 col.metric(label, f"{emoji} TIER {tiers[i]}", help=desc)
             
-            # Show the new pressure flags
+            # Show flags
             col_f1, col_f2, col_f3 = st.columns(3)
             
             # Calculate flags for display
@@ -550,9 +739,9 @@ def main():
             
             col_f1.metric("Home Advantage", "✅" if home_adv_flag else "❌", 
                          help="home_da_tier < away_da_tier")
-            col_f2.metric("BTTS Pressure (New)", "✅" if btts_flag else "❌",
+            col_f2.metric("BTTS Pressure", "✅" if btts_flag else "❌",
                          help="Good offense vs weak defense OR Elite/Derby")
-            col_f3.metric("Overs Pressure (New)", "✅" if overs_flag else "❌",
+            col_f3.metric("Overs Pressure", "✅" if overs_flag else "❌",
                          help="High over threat vs weak defense")
             
             # Check historical patterns
@@ -777,7 +966,7 @@ def main():
                         col1, col2 = st.columns(2)
                         
                         with col1:
-                            st.subheader("BTTS Pressure Flag (New Formula)")
+                            st.subheader("BTTS Pressure Flag")
                             btts = pressure_results['btts_pressure']
                             
                             fig = go.Figure(data=[
@@ -801,7 +990,7 @@ def main():
                                 st.info(f"📊 BTTS Pressure Flag shows {diff:.1f}% difference")
                         
                         with col2:
-                            st.subheader("Overs Pressure Flag (New Formula)")
+                            st.subheader("Overs Pressure Flag")
                             overs = pressure_results['overs_pressure']
                             
                             fig = go.Figure(data=[
@@ -867,6 +1056,79 @@ def main():
                 st.error(f"Error in pressure test: {e}")
         else:
             st.info("Supabase not connected")
+    
+    with tab6:
+        st.header("📈 Discovery Engine")
+        st.markdown("### Live Tracking of 100% Rules")
+        
+        rule_stats = get_discovery_stats()
+        
+        if rule_stats:
+            # Display perfect rules first
+            perfect_rules = []
+            other_rules = []
+            
+            for rule_key, stats in rule_stats.items():
+                accuracy = (stats['hits'] / stats['total']) * 100
+                rule_data = {
+                    'Rule': stats['name'],
+                    'Record': f"{stats['hits']}/{stats['total']}",
+                    'Accuracy': f"{accuracy:.1f}%",
+                    'Matches': stats['total']
+                }
+                if accuracy == 100:
+                    perfect_rules.append(rule_data)
+                else:
+                    other_rules.append(rule_data)
+            
+            if perfect_rules:
+                st.success("🎯 **Perfect Rules Still Holding:**")
+                df_perfect = pd.DataFrame(perfect_rules)
+                st.dataframe(df_perfect, use_container_width=True, hide_index=True)
+            
+            if other_rules:
+                st.markdown("---")
+                st.subheader("Other Rules")
+                df_other = pd.DataFrame(other_rules)
+                st.dataframe(df_other, use_container_width=True, hide_index=True)
+            
+            # Overall stats
+            st.markdown("---")
+            total_rule_applications = sum(s['total'] for s in rule_stats.values())
+            total_rule_hits = sum(s['hits'] for s in rule_stats.values())
+            overall_accuracy = (total_rule_hits / total_rule_applications) * 100 if total_rule_applications > 0 else 0
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Rule Applications", total_rule_applications)
+            col2.metric("Total Hits", total_rule_hits)
+            col3.metric("Overall Accuracy", f"{overall_accuracy:.1f}%")
+            
+        else:
+            st.info("No rule data available yet. Complete more matches to track discovery rules.")
+        
+        # Show recent matches with rule hits
+        st.markdown("---")
+        st.subheader("Recent Rule-Breaking Matches")
+        
+        try:
+            result = supabase.table('matches')\
+                .select('*')\
+                .eq('result_entered', True)\
+                .not_.is_('rule_hits', 'null')\
+                .order('match_date', desc=True)\
+                .limit(10)\
+                .execute()
+            
+            if result.data:
+                for match in result.data:
+                    rules = match.get('rule_hits', {})
+                    if rules:
+                        failed_rules = [r['name'] for r in rules.values() if not r['hit']]
+                        if failed_rules:
+                            score = f"{match.get('home_goals', 0)}-{match.get('away_goals', 0)}"
+                            st.warning(f"**{match['home_team']} {score} {match['away_team']}** broke: {', '.join(failed_rules[:2])}")
+        except Exception as e:
+            pass
 
 if __name__ == "__main__":
     main()
