@@ -522,16 +522,34 @@ def get_discovery_stats():
         for match in matches:
             rules = match.get('rule_hits')
             if rules:
-                for rule_key, rule_data in rules.items():
-                    if rule_key not in rule_stats:
-                        rule_stats[rule_key] = {
-                            'name': rule_data['name'],
-                            'total': 0,
-                            'hits': 0
-                        }
-                    rule_stats[rule_key]['total'] += 1
-                    if rule_data['hit']:
-                        rule_stats[rule_key]['hits'] += 1
+                # Handle both string JSON and dict
+                if isinstance(rules, str):
+                    try:
+                        rules = json.loads(rules)
+                    except:
+                        continue
+                
+                # Now rules should be a dict
+                if isinstance(rules, dict):
+                    for rule_key, rule_data in rules.items():
+                        # Handle if rule_data is a dict
+                        if isinstance(rule_data, dict):
+                            rule_name = rule_data.get('name', rule_key)
+                            rule_hit = rule_data.get('hit', False)
+                        else:
+                            # Fallback for unexpected format
+                            rule_name = str(rule_key)
+                            rule_hit = False
+                        
+                        if rule_key not in rule_stats:
+                            rule_stats[rule_key] = {
+                                'name': rule_name,
+                                'total': 0,
+                                'hits': 0
+                            }
+                        rule_stats[rule_key]['total'] += 1
+                        if rule_hit:
+                            rule_stats[rule_key]['hits'] += 1
         
         return rule_stats
     except Exception as e:
@@ -634,7 +652,7 @@ def main():
         st.markdown("**Tiers:** 1💥 2⚡ 3📊 4🐢")
         st.markdown("**Discovery Rules:** Tracked in tab 6")
     
-    # Main tabs - ADDED DISCOVERY TAB
+    # Main tabs
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📋 Predict", 
         "🔍 Discover Patterns", 
@@ -1069,7 +1087,7 @@ def main():
             other_rules = []
             
             for rule_key, stats in rule_stats.items():
-                accuracy = (stats['hits'] / stats['total']) * 100
+                accuracy = (stats['hits'] / stats['total']) * 100 if stats['total'] > 0 else 0
                 rule_data = {
                     'Rule': stats['name'],
                     'Record': f"{stats['hits']}/{stats['total']}",
@@ -1121,14 +1139,28 @@ def main():
             
             if result.data:
                 for match in result.data:
-                    rules = match.get('rule_hits', {})
+                    rules = match.get('rule_hits')
                     if rules:
-                        failed_rules = [r['name'] for r in rules.values() if not r['hit']]
-                        if failed_rules:
-                            score = f"{match.get('home_goals', 0)}-{match.get('away_goals', 0)}"
-                            st.warning(f"**{match['home_team']} {score} {match['away_team']}** broke: {', '.join(failed_rules[:2])}")
+                        # Handle both string JSON and dict
+                        if isinstance(rules, str):
+                            try:
+                                rules = json.loads(rules)
+                            except:
+                                continue
+                        
+                        if isinstance(rules, dict):
+                            failed_rules = []
+                            for rule_data in rules.values():
+                                if isinstance(rule_data, dict) and not rule_data.get('hit', False):
+                                    failed_rules.append(rule_data.get('name', 'Unknown rule'))
+                            
+                            if failed_rules:
+                                score = f"{match.get('home_goals', 0)}-{match.get('away_goals', 0)}"
+                                st.warning(f"**{match['home_team']} {score} {match['away_team']}** broke: {', '.join(failed_rules[:2])}")
+            else:
+                st.info("No rule-breaking matches yet")
         except Exception as e:
-            pass
+            st.error(f"Error loading recent matches: {e}")
 
 if __name__ == "__main__":
     main()
