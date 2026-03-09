@@ -80,7 +80,7 @@ def save_match(data, home_goals=None, away_goals=None):
 
 def get_rule_performance():
     if supabase is None:
-        return []
+        return {}
     
     try:
         result = supabase.table('matches')\
@@ -89,35 +89,11 @@ def get_rule_performance():
             .not_.is_('rule_hits', 'null')\
             .execute()
         
-        rule_stats = {}
-        rule_order = [
-            'rule_21', 'rule_22', 'rule_18', 'rule_13', 'rule_1',  # 100% rules
-            'rule_2', 'rule_5', 'rule_6', 'rule_7', 'rule_16',      # 80-90% rules
-            'rule_3', 'rule_8', 'rule_15', 'rule_20_home', 'rule_20_away', 'rule_17',  # 70-80% rules
-            'rule_10', 'rule_14'                                      # Monitor/Gray Zone
-        ]
-        
-        rule_names = {
-            'rule_1': '[4,4] Opening = ≤2 Goals',
-            'rule_2': 'away_btts_tier = 1 = Winner',
-            'rule_3': 'Importance 2 = ≥3 Goals',
-            'rule_5': 'Home Advantage Flag = No Draw',
-            'rule_6': 'away_da≥55 + home_adv=false = Away unbeaten',
-            'rule_7': 'Mixed Defense = Winner',
-            'rule_8': 'away_da≤40 + home_da≥45 = Away no win',
-            'rule_10': 'home_tier2 vs away_tier3 = Home Loss',
-            'rule_13': '[3,3,3] Opening = Under 2.5',
-            'rule_14': 'Gray Zone (4+ tiers = 3) - No Edge',
-            'rule_15': 'Elite Home = Draw/Away Win',
-            'rule_16': 'Elite Away Win',
-            'rule_17': 'Championship Mixed Defense = Home Win',
-            'rule_18': '[3,4] + home_btts≤2 = Home Win',
-            'rule_19': '[4,3] + away_btts≤2 = Away Win',
-            'rule_20_home': 'Home Tier 1 Attack = Home Win/Draw',
-            'rule_20_away': 'Away Tier 1 Attack = Away Win/Draw',
-            'rule_21': '🔥 DOUBLE PRESSURE = OVER 2.5 LOCK',
-            'rule_22': '🏆 GRAND UNIFIED UNDER RULE'
-        }
+        # Separate rules by category
+        over_rules = {}
+        under_rules = {}
+        outcome_rules = {}
+        gray_rules = {}
         
         for match in result.data:
             rules = match.get('rule_hits')
@@ -128,34 +104,51 @@ def get_rule_performance():
                 rules = json.loads(rules)
             
             for key, rule in rules.items():
-                if key not in rule_stats:
-                    rule_stats[key] = {
-                        'name': rule_names.get(key, rule.get('name', key)),
-                        'total': 0,
-                        'hits': 0
-                    }
-                rule_stats[key]['total'] += 1
-                if rule.get('hit', False):
-                    rule_stats[key]['hits'] += 1
+                rule_name = rule.get('name', key)
+                category = rule.get('category', 'OUTCOME')
+                hit = rule.get('hit', False)
+                
+                # Choose the right dictionary based on category
+                if category == 'OVER':
+                    target = over_rules
+                elif category == 'UNDER':
+                    target = under_rules
+                elif category == 'OUTCOME':
+                    target = outcome_rules
+                elif category == 'GRAY':
+                    target = gray_rules
+                else:
+                    target = outcome_rules  # default
+                
+                if rule_name not in target:
+                    target[rule_name] = {'total': 0, 'hits': 0}
+                
+                target[rule_name]['total'] += 1
+                if hit:
+                    target[rule_name]['hits'] += 1
         
-        # Format for display in rule order
-        result_data = []
-        for key in rule_order:
-            if key in rule_stats:
-                stats = rule_stats[key]
+        # Format results with accuracy
+        def format_results(rule_dict):
+            results = []
+            for name, stats in rule_dict.items():
                 accuracy = (stats['hits'] / stats['total'] * 100) if stats['total'] > 0 else 0
-                result_data.append({
-                    'rule_key': key,
-                    'rule_name': stats['name'],
+                results.append({
+                    'rule_name': name,
                     'total_apps': stats['total'],
                     'hits': stats['hits'],
                     'accuracy': round(accuracy, 1)
                 })
+            return sorted(results, key=lambda x: x['accuracy'], reverse=True)
         
-        return result_data
+        return {
+            'over': format_results(over_rules),
+            'under': format_results(under_rules),
+            'outcome': format_results(outcome_rules),
+            'gray': format_results(gray_rules)
+        }
     except Exception as e:
         st.error(f"Error getting rule performance: {e}")
-        return []
+        return {}
 
 def get_league_stats():
     if supabase is None:
@@ -212,7 +205,7 @@ def get_recent_matches(limit=20):
 
 def main():
     st.title("🏆 Discovery Hunter v22.0")
-    st.markdown("### 22 Active Rules - 2 Gold Locks Discovered!")
+    st.markdown("### Separated OVER/UNDER Rules Engine")
     
     if not SUPABASE_AVAILABLE or supabase is None:
         st.error("Supabase not connected")
@@ -228,13 +221,18 @@ def main():
             st.metric("Total Matches", total.count)
             st.metric("Completed", completed.count)
             
+            # Show quick summary of gold rules
             rules = get_rule_performance()
-            gold_rules = [r for r in rules if r['accuracy'] == 100 and r['total_apps'] >= 5]
-            if gold_rules:
-                st.success(f"🎯 Gold Rules: {len(gold_rules)}")
-                for rule in gold_rules[:2]:
-                    st.metric(rule['rule_name'][:20], f"{rule['accuracy']}%", f"{rule['hits']}/{rule['total_apps']}")
-        except:
+            if rules:
+                st.markdown("---")
+                st.subheader("🏆 Gold Rules")
+                for rule in rules.get('over', [])[:1]:
+                    if rule['accuracy'] == 100:
+                        st.success(f"🔥 {rule['rule_name'][:30]}...")
+                for rule in rules.get('under', [])[:1]:
+                    if rule['accuracy'] == 100:
+                        st.success(f"❄️ {rule['rule_name'][:30]}...")
+        except Exception as e:
             st.info("No data yet")
         
         st.markdown("---")
@@ -275,11 +273,10 @@ def main():
             with col5:
                 relegation = st.checkbox("⚠️ Relegation", key="relegation_input")
             
-            # Custom league input with "OTHER LEAGUES" option
+            # League selection with "OTHER LEAGUE" option
             league_options = ["EPL", "BUNDESLIGA", "SERIE A", "LA LIGA", "LIGUE 1", "CHAMPIONSHIP", "OTHER LEAGUE"]
             league = st.selectbox("League", league_options, key="league_input")
             
-            # If "OTHER LEAGUE" selected, show text input for custom league
             if league == "OTHER LEAGUE":
                 custom_league = st.text_input("Enter League Name", key="custom_league_input")
                 if custom_league:
@@ -320,30 +317,19 @@ def main():
                 with col_r1:
                     home_goals = st.number_input(
                         f"{data['home_team']} Goals", 
-                        min_value=0, 
-                        max_value=20, 
-                        value=0,
+                        min_value=0, max_value=20, value=0,
                         key="home_goals_result"
                     )
                 with col_r2:
                     away_goals = st.number_input(
                         f"{data['away_team']} Goals", 
-                        min_value=0, 
-                        max_value=20, 
-                        value=0,
+                        min_value=0, max_value=20, value=0,
                         key="away_goals_result"
                     )
                 
                 total = home_goals + away_goals
-                btts = home_goals > 0 and away_goals > 0
-                over = total >= 3
-                
-                st.info(
-                    f"**Preview:** {home_goals}-{away_goals} | "
-                    f"Total: {total} | "
-                    f"BTTS: {'✅' if btts else '❌'} | "
-                    f"Over 2.5: {'✅' if over else '❌'}"
-                )
+                outcome = "OVER 2.5" if total >= 3 else "UNDER 2.5"
+                st.info(f"**Preview:** {home_goals}-{away_goals} | Total: {total} | {outcome}")
                 
                 col_b1, col_b2, col_b3 = st.columns([1, 2, 1])
                 with col_b2:
@@ -359,75 +345,69 @@ def main():
     
     with tab2:
         st.header("📊 Rules Engine")
-        st.markdown("### 22 Active Rules - Sorted by Confidence")
+        st.markdown("### Rules Separated by Category")
         
         rules = get_rule_performance()
         
         if rules:
-            # Gold Rules (100%)
-            gold = [r for r in rules if r['accuracy'] == 100 and r['total_apps'] >= 3 and 'Gray Zone' not in r['rule_name']]
-            if gold:
-                st.success("🏆 **GOLD RULES (100%)**")
-                df_gold = pd.DataFrame(gold)
-                st.dataframe(df_gold[['rule_name', 'total_apps', 'hits', 'accuracy']], 
-                           hide_index=True, use_container_width=True)
+            # OVER RULES Section
+            if rules.get('over'):
+                st.subheader("🔥 OVER 2.5 RULES")
+                over_df = pd.DataFrame(rules['over'])
+                # Highlight 100% rules
+                def highlight_gold(val):
+                    if val == 100:
+                        return 'background-color: gold; color: black'
+                    return ''
+                st.dataframe(
+                    over_df.style.applymap(highlight_gold, subset=['accuracy']),
+                    hide_index=True, 
+                    use_container_width=True
+                )
+                st.markdown("---")
             
-            # Silver Rules (90-99%)
-            silver = [r for r in rules if 90 <= r['accuracy'] < 100]
-            if silver:
-                st.info("🥈 **SILVER RULES (90-99%)**")
-                df_silver = pd.DataFrame(silver)
-                st.dataframe(df_silver[['rule_name', 'total_apps', 'hits', 'accuracy']], 
-                           hide_index=True, use_container_width=True)
+            # UNDER RULES Section
+            if rules.get('under'):
+                st.subheader("❄️ UNDER 2.5 RULES")
+                under_df = pd.DataFrame(rules['under'])
+                def highlight_gold(val):
+                    if val == 100:
+                        return 'background-color: gold; color: black'
+                    return ''
+                st.dataframe(
+                    under_df.style.applymap(highlight_gold, subset=['accuracy']),
+                    hide_index=True, 
+                    use_container_width=True
+                )
+                st.markdown("---")
             
-            # Bronze Rules (80-89%)
-            bronze = [r for r in rules if 80 <= r['accuracy'] < 90]
-            if bronze:
-                st.info("🥉 **BRONZE RULES (80-89%)**")
-                df_bronze = pd.DataFrame(bronze)
-                st.dataframe(df_bronze[['rule_name', 'total_apps', 'hits', 'accuracy']], 
-                           hide_index=True, use_container_width=True)
+            # OUTCOME RULES Section
+            if rules.get('outcome'):
+                st.subheader("🎯 MATCH OUTCOME RULES")
+                outcome_df = pd.DataFrame(rules['outcome'])
+                st.dataframe(outcome_df, hide_index=True, use_container_width=True)
+                st.markdown("---")
             
-            # Developing Rules (70-79%)
-            developing = [r for r in rules if 70 <= r['accuracy'] < 80]
-            if developing:
-                st.info("📈 **DEVELOPING (70-79%)**")
-                df_dev = pd.DataFrame(developing)
-                st.dataframe(df_dev[['rule_name', 'total_apps', 'hits', 'accuracy']], 
-                           hide_index=True, use_container_width=True)
+            # GRAY ZONE Section
+            if rules.get('gray'):
+                st.subheader("⚪ GRAY ZONE (No Edge)")
+                gray_df = pd.DataFrame(rules['gray'])
+                st.dataframe(gray_df[['rule_name', 'total_apps']], hide_index=True, use_container_width=True)
             
-            # Monitor Rules (<70%)
-            monitor = [r for r in rules if r['accuracy'] < 70 and 'Gray Zone' not in r['rule_name']]
-            if monitor:
-                st.warning("⚠️ **MONITOR (<70%)**")
-                df_mon = pd.DataFrame(monitor)
-                st.dataframe(df_mon[['rule_name', 'total_apps', 'hits', 'accuracy']], 
-                           hide_index=True, use_container_width=True)
-            
-            # Gray Zone
-            gray = [r for r in rules if 'Gray Zone' in r['rule_name']]
-            if gray:
-                st.info("⚪ **GRAY ZONE (No Edge)**")
-                df_gray = pd.DataFrame(gray)
-                st.dataframe(df_gray[['rule_name', 'total_apps']], 
-                           hide_index=True, use_container_width=True)
-            
-            # Visualization
+            # Summary stats
             st.markdown("---")
-            st.subheader("📈 Rule Accuracy Chart")
+            col1, col2, col3 = st.columns(3)
             
-            chart_data = pd.DataFrame([r for r in rules if r['total_apps'] >= 3 and 'Gray Zone' not in r['rule_name']])
-            if not chart_data.empty:
-                fig = px.bar(chart_data, 
-                            x='rule_name', 
-                            y='accuracy',
-                            color='accuracy',
-                            color_continuous_scale='RdYlGn',
-                            range_color=[0, 100],
-                            title='Rule Accuracy (%)',
-                            labels={'rule_name': 'Rule', 'accuracy': 'Accuracy %'})
-                fig.update_layout(xaxis_tickangle=-45, height=600)
-                st.plotly_chart(fig, use_container_width=True)
+            total_over_apps = sum(r['total_apps'] for r in rules.get('over', []))
+            total_under_apps = sum(r['total_apps'] for r in rules.get('under', []))
+            total_outcome_apps = sum(r['total_apps'] for r in rules.get('outcome', []))
+            
+            col1.metric("Total OVER Applications", total_over_apps)
+            col2.metric("Total UNDER Applications", total_under_apps)
+            col3.metric("Total OUTCOME Applications", total_outcome_apps)
+            
+        else:
+            st.info("No rule data available yet. Add matches to discover patterns.")
     
     with tab3:
         st.header("📈 League Statistics")
@@ -483,16 +463,17 @@ def main():
             for m in matches:
                 # Get rule summary
                 rules = m.get('rule_hits')
-                rule_count = 0
                 gold_count = 0
                 
                 if rules:
                     if isinstance(rules, str):
                         rules = json.loads(rules)
                     if isinstance(rules, dict):
-                        rule_count = len(rules)
-                        gold_count = sum(1 for r in rules.values() 
-                                       if r.get('hit') and ('LOCK' in r.get('name', '') or 'GRAND' in r.get('name', '')))
+                        for rule in rules.values():
+                            if rule.get('hit') and rule.get('accuracy', 0) == 100:
+                                gold_count += 1
+                
+                total_goals = m.get('actual_goals', 0)
                 
                 display_data.append({
                     'Date': m.get('match_date', '')[-5:] if m.get('match_date') else '?',
@@ -500,9 +481,9 @@ def main():
                     'Score': f"{m.get('home_goals', 0)}-{m.get('away_goals', 0)}",
                     'Away': m.get('away_team', ''),
                     'League': m.get('league', ''),
-                    'Rules': rule_count,
-                    'Gold': '🏆' * gold_count if gold_count else '',
-                    'Importance': m.get('importance_score', 0)
+                    'Total': total_goals,
+                    'O/U': 'OVER' if total_goals >= 3 else 'UNDER',
+                    'Gold': '🏆' * gold_count if gold_count else ''
                 })
             
             df = pd.DataFrame(display_data)
@@ -523,7 +504,7 @@ def main():
                 
                 if isinstance(rules, dict):
                     failed = [r['name'] for r in rules.values() 
-                             if not r.get('hit', False) and 'Gray Zone' not in r.get('name', '')]
+                             if not r.get('hit', False) and 'GRAY' not in r.get('name', '')]
                     if failed:
                         breakers.append({
                             'Match': f"{m['home_team']} {m['home_goals']}-{m['away_goals']} {m['away_team']}",
