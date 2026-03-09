@@ -129,7 +129,7 @@ def get_rule_performance():
         
         for rule in rules_data:
             name = rule.get('rule_name', '')
-            if 'OVER' in name or 'DOUBLE PRESSURE' in name:
+            if 'OVER' in name or 'DOUBLE PRESSURE' in name or '🔥' in name:
                 over_rules.append(rule)
             elif 'UNDER' in name:
                 under_rules.append(rule)
