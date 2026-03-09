@@ -255,41 +255,60 @@ def main():
             
             with col1:
                 st.markdown("**🏠 HOME**")
-                home_team = st.text_input("Team")
-                home_da = st.number_input("DA", 0, 100, 50)
-                home_btts = st.number_input("BTTS %", 0, 100, 50)
-                home_over = st.number_input("Over %", 0, 100, 50)
+                home_team = st.text_input("Team", key="home_team_input")
+                home_da = st.number_input("DA", 0, 100, 50, key="home_da_input")
+                home_btts = st.number_input("BTTS %", 0, 100, 50, key="home_btts_input")
+                home_over = st.number_input("Over %", 0, 100, 50, key="home_over_input")
             
             with col2:
                 st.markdown("**✈️ AWAY**")
-                away_team = st.text_input("Team", key="away_team")
-                away_da = st.number_input("DA", 0, 100, 50, key="away_da")
-                away_btts = st.number_input("BTTS %", 0, 100, 50, key="away_btts")
-                away_over = st.number_input("Over %", 0, 100, 50, key="away_over")
+                away_team = st.text_input("Team", key="away_team_input")
+                away_da = st.number_input("DA", 0, 100, 50, key="away_da_input")
+                away_btts = st.number_input("BTTS %", 0, 100, 50, key="away_btts_input")
+                away_over = st.number_input("Over %", 0, 100, 50, key="away_over_input")
             
             col3, col4, col5 = st.columns(3)
             with col3:
-                elite = st.checkbox("⭐ Elite")
+                elite = st.checkbox("⭐ Elite", key="elite_input")
             with col4:
-                derby = st.checkbox("🏆 Derby")
+                derby = st.checkbox("🏆 Derby", key="derby_input")
             with col5:
-                relegation = st.checkbox("⚠️ Relegation")
+                relegation = st.checkbox("⚠️ Relegation", key="relegation_input")
             
-            league = st.selectbox("League", ["EPL", "BUNDESLIGA", "SERIE A", "LA LIGA", "LIGUE 1", "CHAMPIONSHIP"])
-            notes = st.text_input("Notes")
+            # Custom league input with "OTHER LEAGUES" option
+            league_options = ["EPL", "BUNDESLIGA", "SERIE A", "LA LIGA", "LIGUE 1", "CHAMPIONSHIP", "OTHER LEAGUE"]
+            league = st.selectbox("League", league_options, key="league_input")
+            
+            # If "OTHER LEAGUE" selected, show text input for custom league
+            if league == "OTHER LEAGUE":
+                custom_league = st.text_input("Enter League Name", key="custom_league_input")
+                if custom_league:
+                    league = custom_league.upper()
+            
+            notes = st.text_input("Notes (injuries, weather, etc.)", key="notes_input")
             
             submitted = st.form_submit_button("🔍 ANALYZE", use_container_width=True)
         
         if submitted:
-            st.session_state.pending_match = {
-                'home_team': home_team, 'away_team': away_team, 'league': league,
-                'home_da': home_da, 'away_da': away_da,
-                'home_btts': home_btts, 'away_btts': away_btts,
-                'home_over': home_over, 'away_over': away_over,
-                'elite': elite, 'derby': derby, 'relegation': relegation,
-                'notes': notes
-            }
-            st.rerun()
+            if not home_team or not away_team:
+                st.error("Please enter both team names")
+            else:
+                st.session_state.pending_match = {
+                    'home_team': home_team, 
+                    'away_team': away_team, 
+                    'league': league,
+                    'home_da': home_da, 
+                    'away_da': away_da,
+                    'home_btts': home_btts, 
+                    'away_btts': away_btts,
+                    'home_over': home_over, 
+                    'away_over': away_over,
+                    'elite': elite, 
+                    'derby': derby, 
+                    'relegation': relegation,
+                    'notes': notes
+                }
+                st.rerun()
         
         if st.session_state.pending_match:
             data = st.session_state.pending_match
@@ -299,18 +318,41 @@ def main():
             with st.form("result_form"):
                 col_r1, col_r2 = st.columns(2)
                 with col_r1:
-                    home_goals = st.number_input(f"{data['home_team']} Goals", 0, 20, 0)
+                    home_goals = st.number_input(
+                        f"{data['home_team']} Goals", 
+                        min_value=0, 
+                        max_value=20, 
+                        value=0,
+                        key="home_goals_result"
+                    )
                 with col_r2:
-                    away_goals = st.number_input(f"{data['away_team']} Goals", 0, 20, 0)
+                    away_goals = st.number_input(
+                        f"{data['away_team']} Goals", 
+                        min_value=0, 
+                        max_value=20, 
+                        value=0,
+                        key="away_goals_result"
+                    )
                 
                 total = home_goals + away_goals
-                st.info(f"Preview: {home_goals}-{away_goals} | Total: {total} | BTTS: {'✅' if home_goals>0 and away_goals>0 else '❌'} | Over: {'✅' if total>=3 else '❌'}")
+                btts = home_goals > 0 and away_goals > 0
+                over = total >= 3
                 
-                saved = st.form_submit_button("💾 SAVE", type="primary", use_container_width=True)
+                st.info(
+                    f"**Preview:** {home_goals}-{away_goals} | "
+                    f"Total: {total} | "
+                    f"BTTS: {'✅' if btts else '❌'} | "
+                    f"Over 2.5: {'✅' if over else '❌'}"
+                )
+                
+                col_b1, col_b2, col_b3 = st.columns([1, 2, 1])
+                with col_b2:
+                    saved = st.form_submit_button("💾 SAVE TO DATABASE", type="primary", use_container_width=True)
+                
                 if saved:
                     match_id = save_match(data, home_goals, away_goals)
                     if match_id:
-                        st.success(f"✅ Match #{match_id} saved!")
+                        st.success(f"✅ Match #{match_id} saved successfully!")
                         st.balloons()
                         st.session_state.pending_match = None
                         st.rerun()
@@ -323,7 +365,7 @@ def main():
         
         if rules:
             # Gold Rules (100%)
-            gold = [r for r in rules if r['accuracy'] == 100 and r['total_apps'] >= 3]
+            gold = [r for r in rules if r['accuracy'] == 100 and r['total_apps'] >= 3 and 'Gray Zone' not in r['rule_name']]
             if gold:
                 st.success("🏆 **GOLD RULES (100%)**")
                 df_gold = pd.DataFrame(gold)
@@ -355,7 +397,7 @@ def main():
                            hide_index=True, use_container_width=True)
             
             # Monitor Rules (<70%)
-            monitor = [r for r in rules if r['accuracy'] < 70 and r['rule_name'] != 'Gray Zone (4+ tiers = 3) - No Edge']
+            monitor = [r for r in rules if r['accuracy'] < 70 and 'Gray Zone' not in r['rule_name']]
             if monitor:
                 st.warning("⚠️ **MONITOR (<70%)**")
                 df_mon = pd.DataFrame(monitor)
@@ -374,7 +416,7 @@ def main():
             st.markdown("---")
             st.subheader("📈 Rule Accuracy Chart")
             
-            chart_data = pd.DataFrame([r for r in rules if r['total_apps'] >= 3])
+            chart_data = pd.DataFrame([r for r in rules if r['total_apps'] >= 3 and 'Gray Zone' not in r['rule_name']])
             if not chart_data.empty:
                 fig = px.bar(chart_data, 
                             x='rule_name', 
@@ -389,48 +431,112 @@ def main():
     
     with tab3:
         st.header("📈 League Statistics")
+        st.markdown("### Performance by League")
         
         stats = get_league_stats()
         if stats:
-            df = pd.DataFrame(stats).T.reset_index()
-            df.columns = ['League', 'Matches', 'Avg Goals', 'BTTS %', 'Over %']
+            # Convert to DataFrame
+            data = []
+            for league, stat in stats.items():
+                data.append({
+                    'League': league,
+                    'Matches': stat['matches'],
+                    'Avg Goals': stat['avg_goals'],
+                    'BTTS %': stat['btts_rate'],
+                    'Over %': stat['over_rate']
+                })
+            
+            df = pd.DataFrame(data)
+            df = df.sort_values('Matches', ascending=False)
+            
+            # Display table
             st.dataframe(df, hide_index=True, use_container_width=True)
             
+            # Visualizations
             col1, col2 = st.columns(2)
+            
             with col1:
-                fig = px.bar(df, x='League', y='Avg Goals', title='Average Goals by League')
+                fig = px.bar(df, x='League', y='Avg Goals',
+                            title='Average Goals by League',
+                            color='Avg Goals',
+                            color_continuous_scale='RdYlGn')
                 st.plotly_chart(fig, use_container_width=True)
+            
             with col2:
-                fig = px.bar(df, x='League', y=['BTTS %', 'Over %'], 
-                            title='BTTS & Over Rates', barmode='group')
+                fig = px.bar(df, x='League', y=['BTTS %', 'Over %'],
+                            title='BTTS & Over Rates by League',
+                            barmode='group',
+                            color_discrete_map={'BTTS %': 'blue', 'Over %': 'red'})
                 st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No league data available yet. Add completed matches to see statistics.")
     
     with tab4:
         st.header("📋 Recent Matches")
+        st.markdown("### Latest Completed Matches")
         
         matches = get_recent_matches(20)
+        
         if matches:
-            data = []
+            # Format for display
+            display_data = []
             for m in matches:
-                rules = m.get('rule_hits', {})
-                if isinstance(rules, str):
-                    rules = json.loads(rules)
+                # Get rule summary
+                rules = m.get('rule_hits')
+                rule_count = 0
+                gold_count = 0
                 
-                rule_count = len(rules) if rules else 0
-                gold_rules = sum(1 for r in rules.values() if r.get('hit') and 'LOCK' in r.get('name', ''))
+                if rules:
+                    if isinstance(rules, str):
+                        rules = json.loads(rules)
+                    if isinstance(rules, dict):
+                        rule_count = len(rules)
+                        gold_count = sum(1 for r in rules.values() 
+                                       if r.get('hit') and ('LOCK' in r.get('name', '') or 'GRAND' in r.get('name', '')))
                 
-                data.append({
-                    'Date': m.get('match_date', '')[-5:],
+                display_data.append({
+                    'Date': m.get('match_date', '')[-5:] if m.get('match_date') else '?',
                     'Home': m.get('home_team', ''),
                     'Score': f"{m.get('home_goals', 0)}-{m.get('away_goals', 0)}",
                     'Away': m.get('away_team', ''),
                     'League': m.get('league', ''),
                     'Rules': rule_count,
-                    'Gold': '🏆' * gold_rules if gold_rules else ''
+                    'Gold': '🏆' * gold_count if gold_count else '',
+                    'Importance': m.get('importance_score', 0)
                 })
             
-            df = pd.DataFrame(data)
+            df = pd.DataFrame(display_data)
             st.dataframe(df, hide_index=True, use_container_width=True)
+            
+            # Show rule-breakers
+            st.markdown("---")
+            st.subheader("⚠️ Recent Rule-Breakers")
+            
+            breakers = []
+            for m in matches[:10]:
+                rules = m.get('rule_hits')
+                if not rules:
+                    continue
+                
+                if isinstance(rules, str):
+                    rules = json.loads(rules)
+                
+                if isinstance(rules, dict):
+                    failed = [r['name'] for r in rules.values() 
+                             if not r.get('hit', False) and 'Gray Zone' not in r.get('name', '')]
+                    if failed:
+                        breakers.append({
+                            'Match': f"{m['home_team']} {m['home_goals']}-{m['away_goals']} {m['away_team']}",
+                            'Broken Rules': ', '.join(failed[:2])
+                        })
+            
+            if breakers:
+                for breaker in breakers:
+                    st.warning(f"**{breaker['Match']}** broke: {breaker['Broken Rules']}")
+            else:
+                st.info("No recent rule-breakers found!")
+        else:
+            st.info("No completed matches yet. Add matches to see them here.")
 
 if __name__ == "__main__":
     main()
