@@ -22,8 +22,113 @@ else:
     supabase = None
 
 # ============================================================================
+# GOLD RULES - YOUR VERIFIED PRODUCTION RULES
+# ============================================================================
+
+GOLD_RULES = [
+    {
+        'name': '🔥 Elite + Home Adv = OVER/BTTS',
+        'condition': lambda d: d.get('elite') and d.get('home_adv_flag', False),
+        'over': True,
+        'btts': True,
+        'home_win': 70,
+        'away_win': 20,
+        'confidence': 80,
+        'matches': 10,
+        'emoji': '🔥'
+    },
+    {
+        'name': '🔥 home_da=2 & away_da=3 = OVER/BTTS',
+        'condition': lambda d: d.get('home_da_tier') == 2 and d.get('away_da_tier') == 3,
+        'over': True,
+        'btts': True,
+        'home_win': 60,
+        'away_win': 20,
+        'confidence': 80,
+        'matches': 10,
+        'emoji': '🔥'
+    },
+    {
+        'name': '🔥 Elite + No Home Adv = AWAY OVER/BTTS',
+        'condition': lambda d: d.get('elite') and not d.get('home_adv_flag', True),
+        'over': True,
+        'btts': True,
+        'home_win': 17,
+        'away_win': 75,
+        'confidence': 75,
+        'matches': 12,
+        'emoji': '🔥'
+    },
+    {
+        'name': '🔥 home_btts=2 & away_btts=2 = OVER/BTTS',
+        'condition': lambda d: d.get('home_btts_tier') == 2 and d.get('away_btts_tier') == 2,
+        'over': True,
+        'btts': True,
+        'home_win': 25,
+        'away_win': 63,
+        'confidence': 75,
+        'matches': 8,
+        'emoji': '🔥'
+    },
+    {
+        'name': '❄️ home_btts=3 & away_btts=2 = UNDER',
+        'condition': lambda d: d.get('home_btts_tier') == 3 and d.get('away_btts_tier') == 2,
+        'under': True,
+        'confidence': 89,
+        'matches': 9,
+        'emoji': '❄️'
+    },
+    {
+        'name': '❄️ UNDER Lock (No Adv + No Pressure)',
+        'condition': lambda d: not d.get('home_adv_flag', True) and not d.get('btts_pressure_flag', True),
+        'under': True,
+        'confidence': 77,
+        'matches': 17,
+        'emoji': '❄️'
+    },
+    {
+        'name': '❄️ home_da=4 & home_btts=4 = UNDER',
+        'condition': lambda d: d.get('home_da_tier') == 4 and d.get('home_btts_tier') == 4,
+        'under': True,
+        'confidence': 78,
+        'matches': 9,
+        'emoji': '❄️'
+    },
+    {
+        'name': '❄️ home_btts=4 & away_btts=3 = UNDER',
+        'condition': lambda d: d.get('home_btts_tier') == 4 and d.get('away_btts_tier') == 3,
+        'under': True,
+        'confidence': 75,
+        'matches': 8,
+        'emoji': '❄️'
+    },
+    {
+        'name': '✈️ Away Win Lock',
+        'condition': lambda d: d.get('home_da_tier') == 3 and d.get('away_da_tier') == 2,
+        'away_win': 80,
+        'home_win': 20,
+        'confidence': 80,
+        'matches': 10,
+        'emoji': '✈️'
+    }
+]
+
+# ============================================================================
 # TIER FUNCTIONS
 # ============================================================================
+
+def calculate_tier(value, category):
+    """Convert percentage to tier (1-4)"""
+    if category == 'da':
+        if value >= 75: return 1
+        elif value >= 60: return 2
+        elif value >= 40: return 3
+        else: return 4
+    else:  # btts or over
+        if value >= 70: return 1
+        elif value >= 55: return 2
+        elif value >= 40: return 3
+        else: return 4
 
 def tier_to_emoji(tier, category):
     emojis = {
@@ -40,6 +145,97 @@ def get_tier_description(tier, category):
         return ["Always Scores", "Usually Scores", "50/50", "Rarely Scores"][tier-1]
     else:
         return ["Goal Fest", "Goals Likely", "50/50", "Goals Unlikely"][tier-1]
+
+# ============================================================================
+# PREDICTION ENGINE
+# ============================================================================
+
+def analyze_match(data):
+    """Analyze match and return predictions based on gold rules"""
+    
+    # Calculate tiers
+    home_da_tier = calculate_tier(data['home_da'], 'da')
+    away_da_tier = calculate_tier(data['away_da'], 'da')
+    home_btts_tier = calculate_tier(data['home_btts'], 'btts')
+    away_btts_tier = calculate_tier(data['away_btts'], 'btts')
+    home_over_tier = calculate_tier(data['home_over'], 'over')
+    away_over_tier = calculate_tier(data['away_over'], 'over')
+    
+    # Calculate flags
+    home_adv_flag = home_da_tier <= 2 and away_da_tier >= 3
+    btts_pressure_flag = (home_btts_tier <= 2 and away_btts_tier <= 2)
+    
+    # Enhanced data for rules
+    enhanced_data = {
+        **data,
+        'home_da_tier': home_da_tier,
+        'away_da_tier': away_da_tier,
+        'home_btts_tier': home_btts_tier,
+        'away_btts_tier': away_btts_tier,
+        'home_over_tier': home_over_tier,
+        'away_over_tier': away_over_tier,
+        'home_adv_flag': home_adv_flag,
+        'btts_pressure_flag': btts_pressure_flag
+    }
+    
+    # Find matching rules
+    matches = []
+    for rule in GOLD_RULES:
+        try:
+            if rule['condition'](enhanced_data):
+                matches.append(rule)
+        except:
+            continue
+    
+    # If no gold rules match, look for strong signals
+    if not matches:
+        # OVER 2.5 signal
+        if (home_over_tier <= 2 and away_over_tier <= 2) or (home_over_tier == 1 or away_over_tier == 1):
+            matches.append({
+                'name': '📈 OVER 2.5 Signal',
+                'over': True,
+                'confidence': 70,
+                'emoji': '📈'
+            })
+        
+        # UNDER 2.5 signal
+        if (home_over_tier >= 3 and away_over_tier >= 3) or (home_da_tier <= 2 and away_da_tier <= 2):
+            matches.append({
+                'name': '📉 UNDER 2.5 Signal',
+                'under': True,
+                'confidence': 70,
+                'emoji': '📉'
+            })
+        
+        # BTTS signal
+        if home_btts_tier <= 2 and away_btts_tier <= 2:
+            matches.append({
+                'name': '⚽ BTTS Yes',
+                'btts': True,
+                'confidence': 75,
+                'emoji': '⚽'
+            })
+        
+        # Clean sheets possible
+        if home_btts_tier >= 3 and away_btts_tier >= 3:
+            matches.append({
+                'name': '🧤 BTTS No',
+                'btts': False,
+                'confidence': 70,
+                'emoji': '🧤'
+            })
+    
+    return {
+        'matches': matches,
+        'home_da_tier': home_da_tier,
+        'away_da_tier': away_da_tier,
+        'home_btts_tier': home_btts_tier,
+        'away_btts_tier': away_btts_tier,
+        'home_over_tier': home_over_tier,
+        'away_over_tier': away_over_tier,
+        'home_adv_flag': home_adv_flag,
+        'btts_pressure_flag': btts_pressure_flag
+    }
 
 # ============================================================================
 # DATABASE FUNCTIONS
@@ -226,7 +422,7 @@ def get_upcoming_matches(limit=10):
 
 def main():
     st.title("🏆 Discovery Hunter v22.0")
-    st.markdown("### 22 Active Rules - OVER/UNDER Separated")
+    st.markdown("### 9 Gold Rules • 22 Active Rules • OVER/UNDER Separated")
     
     if not SUPABASE_AVAILABLE:
         st.error("Supabase module not installed. Run: pip install supabase")
@@ -249,20 +445,10 @@ def main():
             st.metric("Upcoming", upcoming.count if hasattr(upcoming, 'count') else 0)
             
             # Show gold rules
-            rules = get_rule_performance()
-            if rules:
-                st.markdown("---")
-                st.subheader("🏆 Gold Rules")
-                
-                # Show OVER gold rules
-                for rule in rules.get('over', []):
-                    if rule.get('accuracy', 0) == 100:
-                        st.success(f"🔥 {rule['rule_name'][:30]}")
-                
-                # Show UNDER gold rules
-                for rule in rules.get('under', []):
-                    if rule.get('accuracy', 0) == 100:
-                        st.success(f"❄️ {rule['rule_name'][:30]}")
+            st.markdown("---")
+            st.subheader("🏆 Gold Rules")
+            for rule in GOLD_RULES[:5]:  # Show top 5
+                st.success(f"{rule['emoji']} {rule['name'][:30]}...")
         except Exception as e:
             st.info("No data yet")
         
@@ -278,6 +464,8 @@ def main():
         
         if 'pending_match' not in st.session_state:
             st.session_state.pending_match = None
+        if 'analysis_result' not in st.session_state:
+            st.session_state.analysis_result = None
         
         with st.form("match_form"):
             col1, col2 = st.columns(2)
@@ -314,12 +502,13 @@ def main():
             
             notes = st.text_input("Notes", key="notes_input")
             
-            submitted = st.form_submit_button("🔍 ANALYZE", use_container_width=True)
+            analyzed = st.form_submit_button("🔍 ANALYZE", use_container_width=True)
         
-        if submitted:
+        if analyzed:
             if not home_team or not away_team:
                 st.error("Please enter both team names")
             else:
+                # Store match data
                 st.session_state.pending_match = {
                     'home_team': home_team, 
                     'away_team': away_team, 
@@ -335,10 +524,135 @@ def main():
                     'relegation': relegation,
                     'notes': notes
                 }
+                
+                # Run analysis
+                st.session_state.analysis_result = analyze_match(st.session_state.pending_match)
                 st.rerun()
         
-        if st.session_state.pending_match:
+        # SHOW PREDICTION RESULTS (before result entry)
+        if st.session_state.analysis_result and st.session_state.pending_match:
             data = st.session_state.pending_match
+            analysis = st.session_state.analysis_result
+            
+            st.markdown("---")
+            
+            # Display tiers in a nice format
+            col_t1, col_t2, col_t3 = st.columns(3)
+            
+            with col_t1:
+                st.markdown("**🏠 HOME**")
+                st.markdown(f"DA: {tier_to_emoji(analysis['home_da_tier'], 'da')} {get_tier_description(analysis['home_da_tier'], 'da')}")
+                st.markdown(f"BTTS: {tier_to_emoji(analysis['home_btts_tier'], 'btts')} {get_tier_description(analysis['home_btts_tier'], 'btts')}")
+                st.markdown(f"OVER: {tier_to_emoji(analysis['home_over_tier'], 'over')} {get_tier_description(analysis['home_over_tier'], 'over')}")
+            
+            with col_t2:
+                st.markdown("**⚡ FLAGS**")
+                if analysis['home_adv_flag']:
+                    st.markdown("🏠 **Home Advantage**")
+                if analysis['btts_pressure_flag']:
+                    st.markdown("⚽ **BTTS Pressure**")
+                if data['elite']:
+                    st.markdown("⭐ **Elite Match**")
+                if data['derby']:
+                    st.markdown("🏆 **Derby**")
+                if data['relegation']:
+                    st.markdown("⚠️ **Relegation Battle**")
+            
+            with col_t3:
+                st.markdown("**✈️ AWAY**")
+                st.markdown(f"DA: {tier_to_emoji(analysis['away_da_tier'], 'da')} {get_tier_description(analysis['away_da_tier'], 'da')}")
+                st.markdown(f"BTTS: {tier_to_emoji(analysis['away_btts_tier'], 'btts')} {get_tier_description(analysis['away_btts_tier'], 'btts')}")
+                st.markdown(f"OVER: {tier_to_emoji(analysis['away_over_tier'], 'over')} {get_tier_description(analysis['away_over_tier'], 'over')}")
+            
+            st.markdown("---")
+            
+            # PREDICTION SECTION - THIS IS WHAT YOU WANTED!
+            st.subheader("🎯 PREDICTION")
+            
+            if analysis['matches']:
+                # Show all matching gold rules
+                for rule in analysis['matches']:
+                    confidence = rule.get('confidence', 70)
+                    
+                    # Create colored box based on confidence
+                    if confidence >= 80:
+                        box_color = "#00ff0015"  # Green
+                        conf_text = "🔒 LOCK"
+                    elif confidence >= 75:
+                        box_color = "#ffff0015"  # Yellow  
+                        conf_text = "✅ STRONG"
+                    else:
+                        box_color = "#ffaa0015"  # Orange
+                        conf_text = "📊 PLAY"
+                    
+                    with st.container():
+                        st.markdown(f"""
+                        <div style="background-color: {box_color}; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 5px solid {'#00ff00' if confidence>=80 else '#ffff00' if confidence>=75 else '#ffaa00'}">
+                            <h3 style="margin:0">{rule['emoji']} {rule['name']} <span style="float:right">{conf_text} | {confidence}%</span></h3>
+                            <p style="margin:5px 0 0 0; font-size: 18px;">
+                                {"🔥 OVER 2.5" if rule.get('over') else ""}
+                                {"❄️ UNDER 2.5" if rule.get('under') else ""}
+                                {"⚽ BTTS Yes" if rule.get('btts') else ""}
+                                {"🧤 BTTS No" if rule.get('btts') == False else ""}
+                                {"🏠 HOME WIN" if rule.get('home_win', 0) > 50 else ""}
+                                {"✈️ AWAY WIN" if rule.get('away_win', 0) > 50 else ""}
+                                {"⚖️ NO EDGE" if not rule.get('over') and not rule.get('under') and not rule.get('btts') and rule.get('home_win', 0) < 50 and rule.get('away_win', 0) < 50 else ""}
+                            </p>
+                            <p style="margin:5px 0 0 0; color: #888;">Sample: {rule.get('matches', 'N/A')} matches • {confidence}% accuracy</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                # No gold rules matched - show general signals
+                st.info("⚠️ No Gold Rules matched this match. Based on general signals:")
+                
+                col_s1, col_s2 = st.columns(2)
+                
+                with col_s1:
+                    if analysis['home_over_tier'] <= 2 or analysis['away_over_tier'] <= 2:
+                        st.success("📈 **OVER 2.5 Possible**")
+                    if analysis['home_btts_tier'] <= 2 and analysis['away_btts_tier'] <= 2:
+                        st.success("⚽ **BTTS Likely**")
+                
+                with col_s2:
+                    if analysis['home_over_tier'] >= 3 and analysis['away_over_tier'] >= 3:
+                        st.info("📉 **UNDER 2.5 Possible**")
+                    if analysis['home_btts_tier'] >= 3 and analysis['away_btts_tier'] >= 3:
+                        st.info("🧤 **Clean Sheet Possible**")
+            
+            # RECOMMENDATION
+            st.markdown("---")
+            st.subheader("💡 RECOMMENDATION")
+            
+            # Find best pick
+            best_pick = None
+            for rule in analysis['matches']:
+                if rule.get('confidence', 0) >= 75:
+                    best_pick = rule
+                    break
+            
+            if best_pick:
+                pick_emoji = "🔒" if best_pick.get('confidence', 0) >= 80 else "✅"
+                
+                if best_pick.get('over'):
+                    st.markdown(f"## {pick_emoji} **BET: OVER 2.5** @ {best_pick.get('confidence', 75)}% confidence")
+                elif best_pick.get('under'):
+                    st.markdown(f"## {pick_emoji} **BET: UNDER 2.5** @ {best_pick.get('confidence', 75)}% confidence")
+                elif best_pick.get('btts') == True:
+                    st.markdown(f"## {pick_emoji} **BET: BTTS YES** @ {best_pick.get('confidence', 75)}% confidence")
+                elif best_pick.get('btts') == False:
+                    st.markdown(f"## {pick_emoji} **BET: BTTS NO** @ {best_pick.get('confidence', 75)}% confidence")
+                elif best_pick.get('home_win', 0) > 50:
+                    st.markdown(f"## {pick_emoji} **BET: {data['home_team']} TO WIN** @ {best_pick.get('home_win', 75)}%")
+                elif best_pick.get('away_win', 0) > 50:
+                    st.markdown(f"## {pick_emoji} **BET: {data['away_team']} TO WIN** @ {best_pick.get('away_win', 75)}%")
+            else:
+                if analysis['home_over_tier'] <= 2 and analysis['away_over_tier'] <= 2:
+                    st.markdown("## 📈 **CONSIDER: OVER 2.5** (Signal strength: 70%)")
+                elif analysis['home_over_tier'] >= 3 and analysis['away_over_tier'] >= 3:
+                    st.markdown("## 📉 **CONSIDER: UNDER 2.5** (Signal strength: 70%)")
+                else:
+                    st.markdown("## ⚖️ **NO CLEAR EDGE** (Avoid or small stake)")
+            
             st.markdown("---")
             st.subheader("📥 Enter Result")
             
@@ -358,7 +672,16 @@ def main():
                     )
                 
                 total = home_goals + away_goals
-                st.info(f"**Preview:** {home_goals}-{away_goals} | Total: {total} | {'OVER' if total>=3 else 'UNDER'} 2.5")
+                
+                # Show if prediction was correct
+                if analysis['matches']:
+                    for rule in analysis['matches']:
+                        if rule.get('over'):
+                            result_text = "✅ CORRECT" if total >= 3 else "❌ INCORRECT"
+                            st.info(f"**Prediction:** OVER 2.5 | **Result:** {total} goals | {result_text}")
+                        elif rule.get('under'):
+                            result_text = "✅ CORRECT" if total < 3 else "❌ INCORRECT"
+                            st.info(f"**Prediction:** UNDER 2.5 | **Result:** {total} goals | {result_text}")
                 
                 col_b1, col_b2, col_b3 = st.columns([1, 2, 1])
                 with col_b2:
@@ -370,6 +693,7 @@ def main():
                         st.success(f"✅ Match #{match_id} saved!")
                         st.balloons()
                         st.session_state.pending_match = None
+                        st.session_state.analysis_result = None
                         st.rerun()
     
     with tab2:
