@@ -121,7 +121,7 @@ def get_rule_performance():
         except:
             return {}
         
-        # Separate by category
+        # Separate by category using emoji and keyword detection
         over_rules = []
         under_rules = []
         outcome_rules = []
@@ -129,12 +129,17 @@ def get_rule_performance():
         
         for rule in rules_data:
             name = rule.get('rule_name', '')
-            if 'OVER' in name or 'DOUBLE PRESSURE' in name or '🔥' in name:
+            
+            # OVER rules - look for 🔥 or OVER or DOUBLE PRESSURE
+            if '🔥' in name or 'OVER' in name or 'DOUBLE PRESSURE' in name:
                 over_rules.append(rule)
-            elif 'UNDER' in name:
+            # UNDER rules - look for ❄️ or UNDER
+            elif '❄️' in name or 'UNDER' in name:
                 under_rules.append(rule)
-            elif 'GRAY' in name:
+            # GRAY zone - look for ⚪ or GRAY
+            elif '⚪' in name or 'GRAY' in name:
                 gray_rules.append(rule)
+            # Everything else is outcome
             else:
                 outcome_rules.append(rule)
         
@@ -245,12 +250,16 @@ def main():
             
             # Show gold rules
             rules = get_rule_performance()
-            if rules and (rules.get('over') or rules.get('under')):
+            if rules:
                 st.markdown("---")
                 st.subheader("🏆 Gold Rules")
+                
+                # Show OVER gold rules
                 for rule in rules.get('over', []):
                     if rule.get('accuracy', 0) == 100:
                         st.success(f"🔥 {rule['rule_name'][:30]}")
+                
+                # Show UNDER gold rules
                 for rule in rules.get('under', []):
                     if rule.get('accuracy', 0) == 100:
                         st.success(f"❄️ {rule['rule_name'][:30]}")
@@ -374,41 +383,45 @@ def main():
             if rules.get('over'):
                 with st.expander("🔥 OVER 2.5 RULES", expanded=True):
                     over_df = pd.DataFrame(rules['over'])
-                    st.dataframe(
-                        over_df[['rule_name', 'total_applications', 'hits', 'accuracy']], 
-                        hide_index=True, 
-                        use_container_width=True
-                    )
+                    if not over_df.empty:
+                        st.dataframe(
+                            over_df[['rule_name', 'total_applications', 'hits', 'accuracy']], 
+                            hide_index=True, 
+                            use_container_width=True
+                        )
             
             # UNDER RULES
             if rules.get('under'):
                 with st.expander("❄️ UNDER 2.5 RULES", expanded=True):
                     under_df = pd.DataFrame(rules['under'])
-                    st.dataframe(
-                        under_df[['rule_name', 'total_applications', 'hits', 'accuracy']], 
-                        hide_index=True, 
-                        use_container_width=True
-                    )
+                    if not under_df.empty:
+                        st.dataframe(
+                            under_df[['rule_name', 'total_applications', 'hits', 'accuracy']], 
+                            hide_index=True, 
+                            use_container_width=True
+                        )
             
             # OUTCOME RULES
             if rules.get('outcome'):
                 with st.expander("🎯 MATCH OUTCOME RULES", expanded=False):
                     outcome_df = pd.DataFrame(rules['outcome'])
-                    st.dataframe(
-                        outcome_df[['rule_name', 'total_applications', 'hits', 'accuracy']], 
-                        hide_index=True, 
-                        use_container_width=True
-                    )
+                    if not outcome_df.empty:
+                        st.dataframe(
+                            outcome_df[['rule_name', 'total_applications', 'hits', 'accuracy']], 
+                            hide_index=True, 
+                            use_container_width=True
+                        )
             
             # GRAY ZONE
             if rules.get('gray'):
                 with st.expander("⚪ GRAY ZONE (No Edge)", expanded=False):
                     gray_df = pd.DataFrame(rules['gray'])
-                    st.dataframe(
-                        gray_df[['rule_name', 'total_applications']], 
-                        hide_index=True, 
-                        use_container_width=True
-                    )
+                    if not gray_df.empty:
+                        st.dataframe(
+                            gray_df[['rule_name', 'total_applications']], 
+                            hide_index=True, 
+                            use_container_width=True
+                        )
             
             # Summary metrics
             st.markdown("---")
@@ -417,11 +430,12 @@ def main():
             total_over = sum(r.get('total_applications', 0) for r in rules.get('over', []))
             total_under = sum(r.get('total_applications', 0) for r in rules.get('under', []))
             total_outcome = sum(r.get('total_applications', 0) for r in rules.get('outcome', []))
+            total_rules = len(rules.get('over', [])) + len(rules.get('under', [])) + len(rules.get('outcome', []))
             
             col1.metric("Total OVER Applications", total_over)
             col2.metric("Total UNDER Applications", total_under)
             col3.metric("Total OUTCOME Applications", total_outcome)
-            col4.metric("Total Rules", len(rules.get('over', [])) + len(rules.get('under', [])) + len(rules.get('outcome', [])))
+            col4.metric("Total Rules", total_rules)
         else:
             st.info("No rule data available yet. Add matches to discover patterns.")
     
@@ -485,13 +499,15 @@ def main():
                         if rule.get('hit') and ('LOCK' in rule.get('name', '') or 'GRAND' in rule.get('name', '')):
                             gold_count += 1
                 
+                total_goals = m.get('home_goals', 0) + m.get('away_goals', 0)
+                
                 data.append({
                     'Date': m.get('match_date', '')[-5:] if m.get('match_date') else '?',
                     'Home': m.get('home_team', ''),
                     'Score': f"{m.get('home_goals', 0)}-{m.get('away_goals', 0)}",
                     'Away': m.get('away_team', ''),
                     'League': m.get('league', ''),
-                    'Total': m.get('actual_goals', 0),
+                    'Total': total_goals,
                     'Rules': rule_count,
                     '🏆': '🏆' * gold_count if gold_count else ''
                 })
