@@ -75,7 +75,7 @@ def save_match(data, home_goals=None, away_goals=None):
         result = supabase.table('matches').insert(match_data).execute()
         return result.data[0]['id']
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error saving match: {e}")
         return None
 
 def get_rule_performance():
@@ -83,68 +83,66 @@ def get_rule_performance():
         return {}
     
     try:
-        result = supabase.table('matches')\
-            .select('rule_hits')\
-            .eq('result_entered', True)\
-            .not_.is_('rule_hits', 'null')\
-            .execute()
-        
-        # Separate rules by category
-        over_rules = {}
-        under_rules = {}
-        outcome_rules = {}
-        gray_rules = {}
-        
-        for match in result.data:
-            rules = match.get('rule_hits')
-            if not rules:
-                continue
-            
-            if isinstance(rules, str):
-                rules = json.loads(rules)
-            
-            for key, rule in rules.items():
-                rule_name = rule.get('name', key)
-                category = rule.get('category', 'OUTCOME')
-                hit = rule.get('hit', False)
+        # Try to use the view first
+        try:
+            result = supabase.table('rule_performance').select('*').execute()
+            if result.data:
+                rules_data = result.data
+            else:
+                # Fallback to direct calculation
+                matches = supabase.table('matches').select('rule_hits').eq('result_entered', True).execute()
+                rules_data = []
+                rule_stats = {}
                 
-                # Choose the right dictionary based on category
-                if category == 'OVER':
-                    target = over_rules
-                elif category == 'UNDER':
-                    target = under_rules
-                elif category == 'OUTCOME':
-                    target = outcome_rules
-                elif category == 'GRAY':
-                    target = gray_rules
-                else:
-                    target = outcome_rules  # default
+                for match in matches.data:
+                    rules = match.get('rule_hits')
+                    if not rules:
+                        continue
+                    
+                    if isinstance(rules, str):
+                        rules = json.loads(rules)
+                    
+                    for key, rule in rules.items():
+                        rule_name = rule.get('name', key)
+                        if rule_name not in rule_stats:
+                            rule_stats[rule_name] = {'total': 0, 'hits': 0}
+                        rule_stats[rule_name]['total'] += 1
+                        if rule.get('hit', False):
+                            rule_stats[rule_name]['hits'] += 1
                 
-                if rule_name not in target:
-                    target[rule_name] = {'total': 0, 'hits': 0}
-                
-                target[rule_name]['total'] += 1
-                if hit:
-                    target[rule_name]['hits'] += 1
+                for name, stats in rule_stats.items():
+                    accuracy = (stats['hits'] / stats['total'] * 100) if stats['total'] > 0 else 0
+                    rules_data.append({
+                        'rule_name': name,
+                        'total_applications': stats['total'],
+                        'hits': stats['hits'],
+                        'accuracy': round(accuracy, 1)
+                    })
+        except:
+            return {}
         
-        # Format results with accuracy
-        def format_results(rule_dict):
-            results = []
-            for name, stats in rule_dict.items():
-                accuracy = (stats['hits'] / stats['total'] * 100) if stats['total'] > 0 else 0
-                results.append({
-                    'rule_name': name,
-                    'total_apps': stats['total'],
-                    'hits': stats['hits'],
-                    'accuracy': round(accuracy, 1)
-                })
-            return sorted(results, key=lambda x: x['accuracy'], reverse=True)
+        # Separate by category
+        over_rules = []
+        under_rules = []
+        outcome_rules = []
+        gray_rules = []
+        
+        for rule in rules_data:
+            name = rule.get('rule_name', '')
+            if 'OVER' in name or 'DOUBLE PRESSURE' in name:
+                over_rules.append(rule)
+            elif 'UNDER' in name:
+                under_rules.append(rule)
+            elif 'GRAY' in name:
+                gray_rules.append(rule)
+            else:
+                outcome_rules.append(rule)
         
         return {
-            'over': format_results(over_rules),
-            'under': format_results(under_rules),
-            'outcome': format_results(outcome_rules),
-            'gray': format_results(gray_rules)
+            'over': sorted(over_rules, key=lambda x: x['accuracy'], reverse=True),
+            'under': sorted(under_rules, key=lambda x: x['accuracy'], reverse=True),
+            'outcome': sorted(outcome_rules, key=lambda x: x['accuracy'], reverse=True),
+            'gray': gray_rules
         }
     except Exception as e:
         st.error(f"Error getting rule performance: {e}")
@@ -168,19 +166,22 @@ def get_league_stats():
         for league in df['league'].unique():
             league_df = df[df['league'] == league]
             total_matches = len(league_df)
+            if total_matches == 0:
+                continue
+                
             total_goals = league_df['actual_goals'].sum()
             btts_count = league_df['actual_btts'].sum()
             over_count = (league_df['actual_goals'] >= 3).sum()
             
             stats[league] = {
                 'matches': total_matches,
-                'avg_goals': round(total_goals / total_matches, 2) if total_matches > 0 else 0,
-                'btts_rate': round((btts_count / total_matches) * 100, 1) if total_matches > 0 else 0,
-                'over_rate': round((over_count / total_matches) * 100, 1) if total_matches > 0 else 0
+                'avg_goals': round(total_goals / total_matches, 2),
+                'btts_rate': round((btts_count / total_matches) * 100, 1),
+                'over_rate': round((over_count / total_matches) * 100, 1)
             }
         return stats
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error getting league stats: {e}")
         return {}
 
 def get_recent_matches(limit=20):
@@ -196,7 +197,22 @@ def get_recent_matches(limit=20):
             .execute()
         return result.data
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error getting recent matches: {e}")
+        return []
+
+def get_upcoming_matches(limit=10):
+    if supabase is None:
+        return []
+    
+    try:
+        result = supabase.table('matches')\
+            .select('*')\
+            .eq('result_entered', False)\
+            .order('match_date', desc=True)\
+            .limit(limit)\
+            .execute()
+        return result.data
+    except Exception as e:
         return []
 
 # ============================================================================
@@ -205,10 +221,14 @@ def get_recent_matches(limit=20):
 
 def main():
     st.title("🏆 Discovery Hunter v22.0")
-    st.markdown("### Separated OVER/UNDER Rules Engine")
+    st.markdown("### 22 Active Rules - OVER/UNDER Separated")
     
-    if not SUPABASE_AVAILABLE or supabase is None:
-        st.error("Supabase not connected")
+    if not SUPABASE_AVAILABLE:
+        st.error("Supabase module not installed. Run: pip install supabase")
+        return
+    
+    if supabase is None:
+        st.error("Supabase connection failed. Check your secrets.")
         return
     
     # Sidebar
@@ -217,21 +237,23 @@ def main():
         try:
             total = supabase.table('matches').select('*', count='exact').execute()
             completed = supabase.table('matches').select('*', count='exact').eq('result_entered', True).execute()
+            upcoming = supabase.table('matches').select('*', count='exact').eq('result_entered', False).execute()
             
-            st.metric("Total Matches", total.count)
-            st.metric("Completed", completed.count)
+            st.metric("Total Matches", total.count if hasattr(total, 'count') else 0)
+            st.metric("Completed", completed.count if hasattr(completed, 'count') else 0)
+            st.metric("Upcoming", upcoming.count if hasattr(upcoming, 'count') else 0)
             
-            # Show quick summary of gold rules
+            # Show gold rules
             rules = get_rule_performance()
-            if rules:
+            if rules and (rules.get('over') or rules.get('under')):
                 st.markdown("---")
                 st.subheader("🏆 Gold Rules")
-                for rule in rules.get('over', [])[:1]:
-                    if rule['accuracy'] == 100:
-                        st.success(f"🔥 {rule['rule_name'][:30]}...")
-                for rule in rules.get('under', [])[:1]:
-                    if rule['accuracy'] == 100:
-                        st.success(f"❄️ {rule['rule_name'][:30]}...")
+                for rule in rules.get('over', []):
+                    if rule.get('accuracy', 0) == 100:
+                        st.success(f"🔥 {rule['rule_name'][:30]}")
+                for rule in rules.get('under', []):
+                    if rule.get('accuracy', 0) == 100:
+                        st.success(f"❄️ {rule['rule_name'][:30]}")
         except Exception as e:
             st.info("No data yet")
         
@@ -240,7 +262,7 @@ def main():
         st.markdown("1💥 Elite | 2⚡ Strong | 3📊 Average | 4🐢 Weak")
     
     # Main tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 New Match", "📊 Rules Engine", "📈 League Stats", "📋 Recent Matches"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 New Match", "📊 Rules Engine", "📈 League Stats", "📋 Recent Matches", "🔮 Upcoming"])
     
     with tab1:
         st.subheader("Enter New Match Data")
@@ -273,7 +295,6 @@ def main():
             with col5:
                 relegation = st.checkbox("⚠️ Relegation", key="relegation_input")
             
-            # League selection with "OTHER LEAGUE" option
             league_options = ["EPL", "BUNDESLIGA", "SERIE A", "LA LIGA", "LIGUE 1", "CHAMPIONSHIP", "OTHER LEAGUE"]
             league = st.selectbox("League", league_options, key="league_input")
             
@@ -282,7 +303,7 @@ def main():
                 if custom_league:
                     league = custom_league.upper()
             
-            notes = st.text_input("Notes (injuries, weather, etc.)", key="notes_input")
+            notes = st.text_input("Notes", key="notes_input")
             
             submitted = st.form_submit_button("🔍 ANALYZE", use_container_width=True)
         
@@ -328,94 +349,87 @@ def main():
                     )
                 
                 total = home_goals + away_goals
-                outcome = "OVER 2.5" if total >= 3 else "UNDER 2.5"
-                st.info(f"**Preview:** {home_goals}-{away_goals} | Total: {total} | {outcome}")
+                st.info(f"**Preview:** {home_goals}-{away_goals} | Total: {total} | {'OVER' if total>=3 else 'UNDER'} 2.5")
                 
                 col_b1, col_b2, col_b3 = st.columns([1, 2, 1])
                 with col_b2:
-                    saved = st.form_submit_button("💾 SAVE TO DATABASE", type="primary", use_container_width=True)
+                    saved = st.form_submit_button("💾 SAVE MATCH", type="primary", use_container_width=True)
                 
                 if saved:
                     match_id = save_match(data, home_goals, away_goals)
                     if match_id:
-                        st.success(f"✅ Match #{match_id} saved successfully!")
+                        st.success(f"✅ Match #{match_id} saved!")
                         st.balloons()
                         st.session_state.pending_match = None
                         st.rerun()
     
     with tab2:
         st.header("📊 Rules Engine")
-        st.markdown("### Rules Separated by Category")
+        st.markdown("### Live Rule Performance")
         
         rules = get_rule_performance()
         
         if rules:
-            # OVER RULES Section
+            # OVER RULES
             if rules.get('over'):
-                st.subheader("🔥 OVER 2.5 RULES")
-                over_df = pd.DataFrame(rules['over'])
-                # Highlight 100% rules
-                def highlight_gold(val):
-                    if val == 100:
-                        return 'background-color: gold; color: black'
-                    return ''
-                st.dataframe(
-                    over_df.style.applymap(highlight_gold, subset=['accuracy']),
-                    hide_index=True, 
-                    use_container_width=True
-                )
-                st.markdown("---")
+                with st.expander("🔥 OVER 2.5 RULES", expanded=True):
+                    over_df = pd.DataFrame(rules['over'])
+                    st.dataframe(
+                        over_df[['rule_name', 'total_applications', 'hits', 'accuracy']], 
+                        hide_index=True, 
+                        use_container_width=True
+                    )
             
-            # UNDER RULES Section
+            # UNDER RULES
             if rules.get('under'):
-                st.subheader("❄️ UNDER 2.5 RULES")
-                under_df = pd.DataFrame(rules['under'])
-                def highlight_gold(val):
-                    if val == 100:
-                        return 'background-color: gold; color: black'
-                    return ''
-                st.dataframe(
-                    under_df.style.applymap(highlight_gold, subset=['accuracy']),
-                    hide_index=True, 
-                    use_container_width=True
-                )
-                st.markdown("---")
+                with st.expander("❄️ UNDER 2.5 RULES", expanded=True):
+                    under_df = pd.DataFrame(rules['under'])
+                    st.dataframe(
+                        under_df[['rule_name', 'total_applications', 'hits', 'accuracy']], 
+                        hide_index=True, 
+                        use_container_width=True
+                    )
             
-            # OUTCOME RULES Section
+            # OUTCOME RULES
             if rules.get('outcome'):
-                st.subheader("🎯 MATCH OUTCOME RULES")
-                outcome_df = pd.DataFrame(rules['outcome'])
-                st.dataframe(outcome_df, hide_index=True, use_container_width=True)
-                st.markdown("---")
+                with st.expander("🎯 MATCH OUTCOME RULES", expanded=False):
+                    outcome_df = pd.DataFrame(rules['outcome'])
+                    st.dataframe(
+                        outcome_df[['rule_name', 'total_applications', 'hits', 'accuracy']], 
+                        hide_index=True, 
+                        use_container_width=True
+                    )
             
-            # GRAY ZONE Section
+            # GRAY ZONE
             if rules.get('gray'):
-                st.subheader("⚪ GRAY ZONE (No Edge)")
-                gray_df = pd.DataFrame(rules['gray'])
-                st.dataframe(gray_df[['rule_name', 'total_apps']], hide_index=True, use_container_width=True)
+                with st.expander("⚪ GRAY ZONE (No Edge)", expanded=False):
+                    gray_df = pd.DataFrame(rules['gray'])
+                    st.dataframe(
+                        gray_df[['rule_name', 'total_applications']], 
+                        hide_index=True, 
+                        use_container_width=True
+                    )
             
-            # Summary stats
+            # Summary metrics
             st.markdown("---")
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             
-            total_over_apps = sum(r['total_apps'] for r in rules.get('over', []))
-            total_under_apps = sum(r['total_apps'] for r in rules.get('under', []))
-            total_outcome_apps = sum(r['total_apps'] for r in rules.get('outcome', []))
+            total_over = sum(r.get('total_applications', 0) for r in rules.get('over', []))
+            total_under = sum(r.get('total_applications', 0) for r in rules.get('under', []))
+            total_outcome = sum(r.get('total_applications', 0) for r in rules.get('outcome', []))
             
-            col1.metric("Total OVER Applications", total_over_apps)
-            col2.metric("Total UNDER Applications", total_under_apps)
-            col3.metric("Total OUTCOME Applications", total_outcome_apps)
-            
+            col1.metric("Total OVER Applications", total_over)
+            col2.metric("Total UNDER Applications", total_under)
+            col3.metric("Total OUTCOME Applications", total_outcome)
+            col4.metric("Total Rules", len(rules.get('over', [])) + len(rules.get('under', [])) + len(rules.get('outcome', [])))
         else:
             st.info("No rule data available yet. Add matches to discover patterns.")
     
     with tab3:
         st.header("📈 League Statistics")
-        st.markdown("### Performance by League")
         
         stats = get_league_stats()
         if stats:
-            # Convert to DataFrame
             data = []
             for league, stat in stats.items():
                 data.append({
@@ -429,7 +443,6 @@ def main():
             df = pd.DataFrame(data)
             df = df.sort_values('Matches', ascending=False)
             
-            # Display table
             st.dataframe(df, hide_index=True, use_container_width=True)
             
             # Visualizations
@@ -445,79 +458,84 @@ def main():
             with col2:
                 fig = px.bar(df, x='League', y=['BTTS %', 'Over %'],
                             title='BTTS & Over Rates by League',
-                            barmode='group',
-                            color_discrete_map={'BTTS %': 'blue', 'Over %': 'red'})
+                            barmode='group')
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No league data available yet. Add completed matches to see statistics.")
     
     with tab4:
         st.header("📋 Recent Matches")
-        st.markdown("### Latest Completed Matches")
         
         matches = get_recent_matches(20)
-        
         if matches:
-            # Format for display
-            display_data = []
+            data = []
             for m in matches:
                 # Get rule summary
-                rules = m.get('rule_hits')
-                gold_count = 0
-                
-                if rules:
-                    if isinstance(rules, str):
+                rules = m.get('rule_hits', {})
+                if isinstance(rules, str):
+                    try:
                         rules = json.loads(rules)
-                    if isinstance(rules, dict):
-                        for rule in rules.values():
-                            if rule.get('hit') and rule.get('accuracy', 0) == 100:
-                                gold_count += 1
+                    except:
+                        rules = {}
                 
-                total_goals = m.get('actual_goals', 0)
+                rule_count = len(rules) if rules else 0
+                gold_count = 0
+                if rules:
+                    for rule in rules.values():
+                        if rule.get('hit') and ('LOCK' in rule.get('name', '') or 'GRAND' in rule.get('name', '')):
+                            gold_count += 1
                 
-                display_data.append({
+                data.append({
                     'Date': m.get('match_date', '')[-5:] if m.get('match_date') else '?',
                     'Home': m.get('home_team', ''),
                     'Score': f"{m.get('home_goals', 0)}-{m.get('away_goals', 0)}",
                     'Away': m.get('away_team', ''),
                     'League': m.get('league', ''),
-                    'Total': total_goals,
-                    'O/U': 'OVER' if total_goals >= 3 else 'UNDER',
-                    'Gold': '🏆' * gold_count if gold_count else ''
+                    'Total': m.get('actual_goals', 0),
+                    'Rules': rule_count,
+                    '🏆': '🏆' * gold_count if gold_count else ''
                 })
             
-            df = pd.DataFrame(display_data)
+            df = pd.DataFrame(data)
             st.dataframe(df, hide_index=True, use_container_width=True)
-            
-            # Show rule-breakers
-            st.markdown("---")
-            st.subheader("⚠️ Recent Rule-Breakers")
-            
-            breakers = []
-            for m in matches[:10]:
-                rules = m.get('rule_hits')
-                if not rules:
-                    continue
-                
-                if isinstance(rules, str):
-                    rules = json.loads(rules)
-                
-                if isinstance(rules, dict):
-                    failed = [r['name'] for r in rules.values() 
-                             if not r.get('hit', False) and 'GRAY' not in r.get('name', '')]
-                    if failed:
-                        breakers.append({
-                            'Match': f"{m['home_team']} {m['home_goals']}-{m['away_goals']} {m['away_team']}",
-                            'Broken Rules': ', '.join(failed[:2])
-                        })
-            
-            if breakers:
-                for breaker in breakers:
-                    st.warning(f"**{breaker['Match']}** broke: {breaker['Broken Rules']}")
-            else:
-                st.info("No recent rule-breakers found!")
         else:
-            st.info("No completed matches yet. Add matches to see them here.")
+            st.info("No completed matches yet.")
+    
+    with tab5:
+        st.header("🔮 Upcoming Matches")
+        st.markdown("### Matches with Preview Rules")
+        
+        matches = get_upcoming_matches(20)
+        if matches:
+            data = []
+            for m in matches:
+                # Check for preview rules
+                rules = m.get('rule_hits', {})
+                if isinstance(rules, str):
+                    try:
+                        rules = json.loads(rules)
+                    except:
+                        rules = {}
+                
+                has_preview = False
+                if rules:
+                    for rule in rules.values():
+                        if 'PREVIEW' in rule.get('name', ''):
+                            has_preview = True
+                            break
+                
+                data.append({
+                    'Date': m.get('match_date', '')[-5:] if m.get('match_date') else '?',
+                    'Home': m.get('home_team', ''),
+                    'Away': m.get('away_team', ''),
+                    'League': m.get('league', ''),
+                    'Preview': '🔮' if has_preview else ''
+                })
+            
+            df = pd.DataFrame(data)
+            st.dataframe(df, hide_index=True, use_container_width=True)
+        else:
+            st.info("No upcoming matches.")
 
 if __name__ == "__main__":
     main()
