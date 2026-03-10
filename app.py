@@ -123,23 +123,6 @@ def get_pattern_stats(min_matches=5):
         return pd.DataFrame()
     
     try:
-        query = """
-        SELECT 
-            pattern_code,
-            total_matches,
-            current_home_win_rate,
-            current_over_rate,
-            current_btts_rate,
-            confidence_score,
-            home_trend,
-            is_emerging,
-            is_monitored,
-            last_calculated
-        FROM public.pattern_tracking
-        WHERE total_matches >= {}
-        ORDER BY confidence_score DESC
-        """.format(min_matches)
-        
         result = supabase.table('pattern_tracking')\
             .select('pattern_code,total_matches,current_home_win_rate,current_over_rate,current_btts_rate,confidence_score,home_trend,is_emerging,is_monitored,last_calculated')\
             .gte('total_matches', min_matches)\
@@ -162,46 +145,39 @@ def get_gold_pattern_performance():
         return pd.DataFrame()
     
     try:
-        result = supabase.table('gold_patterns')\
-            .select('''
-                pattern_code,
-                pattern_name,
-                discovery_sample_size,
-                discovery_home_win_rate,
-                active,
-                confidence_tier,
-                pattern_tracking!inner(
-                    total_matches,
-                    current_home_win_rate,
-                    current_over_rate,
-                    current_btts_rate,
-                    confidence_score,
-                    home_trend
-                )
-            ''')\
+        # This is a complex join - we'll do it in two steps for simplicity
+        gold_result = supabase.table('gold_patterns')\
+            .select('*')\
             .eq('active', True)\
             .execute()
         
-        if result.data:
-            # Flatten the nested data
-            data = []
-            for gp in result.data:
-                if 'pattern_tracking' in gp and gp['pattern_tracking']:
-                    pt = gp['pattern_tracking']
-                    data.append({
-                        'pattern_name': gp['pattern_name'],
-                        'pattern_code': gp['pattern_code'],
-                        'tier': gp['confidence_tier'],
-                        'discovery_matches': gp['discovery_sample_size'],
-                        'current_matches': pt.get('total_matches', 0),
-                        'discovery_rate': gp['discovery_home_win_rate'],
-                        'current_rate': pt.get('current_home_win_rate', 0),
-                        'confidence': pt.get('confidence_score', 0),
-                        'trend': pt.get('home_trend', 'STABLE'),
-                        'variance': (pt.get('current_home_win_rate', 0) - (gp['discovery_home_win_rate'] or 0)) if gp['discovery_home_win_rate'] else 0
-                    })
-            return pd.DataFrame(data)
-        return pd.DataFrame()
+        if not gold_result.data:
+            return pd.DataFrame()
+        
+        data = []
+        for gp in gold_result.data:
+            # Get tracking data for this pattern
+            track_result = supabase.table('pattern_tracking')\
+                .select('*')\
+                .eq('pattern_code', gp['pattern_code'])\
+                .execute()
+            
+            if track_result.data and len(track_result.data) > 0:
+                pt = track_result.data[0]
+                data.append({
+                    'pattern_name': gp['pattern_name'],
+                    'pattern_code': gp['pattern_code'],
+                    'tier': gp.get('confidence_tier', 'GOLD'),
+                    'discovery_matches': gp.get('discovery_sample_size', 0),
+                    'current_matches': pt.get('total_matches', 0),
+                    'discovery_rate': gp.get('discovery_home_win_rate', 0),
+                    'current_rate': pt.get('current_home_win_rate', 0),
+                    'confidence': pt.get('confidence_score', 0),
+                    'trend': pt.get('home_trend', 'STABLE'),
+                    'variance': (pt.get('current_home_win_rate', 0) - (gp.get('discovery_home_win_rate') or 0)) if gp.get('discovery_home_win_rate') else 0
+                })
+        
+        return pd.DataFrame(data)
     except Exception as e:
         st.error(f"Error getting gold performance: {e}")
         return pd.DataFrame()
@@ -288,12 +264,18 @@ def analyze_match(data):
     home_over_tier = calculate_tier(data['home_over'], 'over')
     away_over_tier = calculate_tier(data['away_over'], 'over')
     
-    # Calculate flags
+    # Calculate flags (matches what database does)
     home_adv_flag = home_da_tier <= 2 and away_da_tier >= 3
     btts_pressure_flag = (home_btts_tier <= 2 and away_btts_tier <= 2)
     
-    # Generate pattern code
-    pattern_code = f"{'T' if home_adv_flag else 'F'},{'T' if home_over_tier <= 2 or away_over_tier <= 2 else 'F'},{'T' if btts_pressure_flag else 'F'},{data.get('importance_score', 0)}"
+    # Calculate overs pressure flag (for pattern code)
+    overs_pressure_flag = (home_over_tier <= 2 and away_da_tier >= 3) or (away_over_tier <= 2 and home_da_tier >= 3)
+    
+    # Calculate importance (matches database generated column)
+    importance = (1 if data.get('elite', False) else 0) + (1 if data.get('derby', False) else 0) + (1 if data.get('relegation', False) else 0)
+    
+    # Generate pattern code (matches what database trigger does)
+    pattern_code = f"{'T' if home_adv_flag else 'F'},{'T' if overs_pressure_flag else 'F'},{'T' if btts_pressure_flag else 'F'},{importance}"
     
     # Enhanced data for rules
     enhanced_data = {
@@ -398,7 +380,7 @@ def analyze_match(data):
     }
 
 # ============================================================================
-# DATABASE FUNCTIONS (Existing)
+# DATABASE FUNCTIONS - FIXED VERSION (NO importance_score)
 # ============================================================================
 
 def save_match(data, home_goals=None, away_goals=None):
@@ -406,9 +388,7 @@ def save_match(data, home_goals=None, away_goals=None):
         return None
     
     try:
-        # Calculate importance score
-        importance = (1 if data['elite'] else 0) + (1 if data['derby'] else 0) + (1 if data['relegation'] else 0)
-        
+        # Build match data - NO importance_score (it's generated by database)
         match_data = {
             'home_team': data['home_team'].strip(),
             'away_team': data['away_team'].strip(),
@@ -420,25 +400,30 @@ def save_match(data, home_goals=None, away_goals=None):
             'away_btts': data['away_btts'],
             'home_over': data['home_over'],
             'away_over': data['away_over'],
-            'elite': data['elite'],
-            'derby': data['derby'],
-            'relegation': data['relegation'],
-            'importance_score': importance,
+            'elite': data.get('elite', False),
+            'derby': data.get('derby', False),
+            'relegation': data.get('relegation', False),
             'result_entered': home_goals is not None,
             'discovery_notes': data.get('notes', '')
+            # importance_score is GENERATED - don't include it
+            # pattern_code is set by database trigger - don't include it
         }
         
         if home_goals is not None:
             match_data['home_goals'] = home_goals
             match_data['away_goals'] = away_goals
         
+        # Insert the match
         result = supabase.table('matches').insert(match_data).execute()
         
-        # Show success with pattern info
-        if 'pattern_code' in data:
-            st.info(f"📊 Pattern tracked: {data['pattern_code']}")
-        
-        return result.data[0]['id']
+        if result.data and len(result.data) > 0:
+            match_id = result.data[0]['id']
+            st.success(f"✅ Match #{match_id} saved! Database will calculate pattern automatically.")
+            return match_id
+        else:
+            st.error("No data returned from insert")
+            return None
+            
     except Exception as e:
         st.error(f"Error saving match: {e}")
         return None
@@ -673,9 +658,9 @@ def main():
             with col5:
                 relegation = st.checkbox("⚠️ Relegation", key="relegation_input")
             
-            # Calculate importance score for display
-            importance = (1 if elite else 0) + (1 if derby else 0) + (1 if relegation else 0)
-            st.caption(f"Importance Score: {importance} (0-3)")
+            # Show importance score preview (calculated, not stored)
+            importance_preview = (1 if elite else 0) + (1 if derby else 0) + (1 if relegation else 0)
+            st.caption(f"Importance Score Preview: {importance_preview} (will be auto-generated by database)")
             
             league_options = ["EPL", "BUNDESLIGA", "SERIE A", "LA LIGA", "LIGUE 1", "CHAMPIONSHIP", "OTHER LEAGUE"]
             league = st.selectbox("League", league_options, key="league_input")
@@ -693,10 +678,7 @@ def main():
             if not home_team or not away_team:
                 st.error("Please enter both team names")
             else:
-                # Calculate importance
-                importance = (1 if elite else 0) + (1 if derby else 0) + (1 if relegation else 0)
-                
-                # Store match data
+                # Store match data (NO importance_score - will be generated)
                 st.session_state.pending_match = {
                     'home_team': home_team, 
                     'away_team': away_team, 
@@ -710,7 +692,6 @@ def main():
                     'elite': elite, 
                     'derby': derby, 
                     'relegation': relegation,
-                    'importance_score': importance,
                     'notes': notes
                 }
                 
@@ -744,13 +725,16 @@ def main():
                     st.markdown("🏠 **Home Advantage**")
                 if analysis['btts_pressure_flag']:
                     st.markdown("⚽ **BTTS Pressure**")
-                if data['elite']:
+                if data.get('elite', False):
                     st.markdown("⭐ **Elite Match**")
-                if data['derby']:
+                if data.get('derby', False):
                     st.markdown("🏆 **Derby**")
-                if data['relegation']:
+                if data.get('relegation', False):
                     st.markdown("⚠️ **Relegation Battle**")
-                st.markdown(f"📊 **Importance: {data['importance_score']}**")
+                
+                # Show importance preview
+                importance_val = (1 if data.get('elite', False) else 0) + (1 if data.get('derby', False) else 0) + (1 if data.get('relegation', False) else 0)
+                st.markdown(f"📊 **Importance: {importance_val}**")
             
             with col_t3:
                 st.markdown("**✈️ AWAY**")
@@ -790,26 +774,53 @@ def main():
                         source_badge = "🏆 GOLD"
                     
                     with st.container():
-                        st.markdown(f"""
+                        # Build the HTML safely
+                        html_content = f"""
                         <div style="background-color: {box_color}; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 5px solid {border_color};">
                             <h3 style="margin:0">{rule['emoji']} {rule['name']} <span style="float:right">{source_badge} | {confidence}%</span></h3>
                             <p style="margin:5px 0 0 0; font-size: 18px;">
-                                {"🔥 OVER 2.5" if rule.get('over') else ""}
-                                {"❄️ UNDER 2.5" if rule.get('under') else ""}
-                                {"⚽ BTTS Yes" if rule.get('btts') else ""}
-                                {"🧤 BTTS No" if rule.get('btts') == False else ""}
-                                {"🏠 HOME WIN" if rule.get('home_win_rate', 0) > 50 or rule.get('home_win', 0) > 50 else ""}
-                                {"✈️ AWAY WIN" if rule.get('away_win', 0) > 50 else ""}
-                                {"⚖️ NO EDGE" if not rule.get('over') and not rule.get('under') and not rule.get('btts') and rule.get('home_win', 0) < 50 and rule.get('away_win', 0) < 50 else ""}
+                        """
+                        
+                        # Add outcome indicators
+                        outcomes = []
+                        if rule.get('over'):
+                            outcomes.append("🔥 OVER 2.5")
+                        if rule.get('under'):
+                            outcomes.append("❄️ UNDER 2.5")
+                        if rule.get('btts') == True:
+                            outcomes.append("⚽ BTTS Yes")
+                        if rule.get('btts') == False:
+                            outcomes.append("🧤 BTTS No")
+                        if rule.get('home_win_rate', 0) > 50 or rule.get('home_win', 0) > 50:
+                            outcomes.append("🏠 HOME WIN")
+                        if rule.get('away_win', 0) > 50:
+                            outcomes.append("✈️ AWAY WIN")
+                        
+                        if outcomes:
+                            html_content += " ".join(outcomes)
+                        else:
+                            html_content += "⚖️ NO EDGE"
+                        
+                        html_content += f"""
                             </p>
                             <p style="margin:5px 0 0 0; color: #888;">
-                                {f"Matches: {rule.get('matches', 'N/A')}" if rule.get('matches') else ""}
-                                {f" | Home: {rule.get('home_win_rate', 0)}%" if rule.get('home_win_rate') else ""}
-                                {f" | Over: {rule.get('over_rate', 0)}%" if rule.get('over_rate') else ""}
-                                {f" | BTTS: {rule.get('btts_rate', 0)}%" if rule.get('btts_rate') else ""}
-                            </p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        """
+                        
+                        # Add stats
+                        stats = []
+                        if rule.get('matches'):
+                            stats.append(f"Matches: {rule.get('matches')}")
+                        if rule.get('home_win_rate'):
+                            stats.append(f"Home: {rule.get('home_win_rate')}%")
+                        if rule.get('over_rate'):
+                            stats.append(f"Over: {rule.get('over_rate')}%")
+                        if rule.get('btts_rate'):
+                            stats.append(f"BTTS: {rule.get('btts_rate')}%")
+                        
+                        html_content += " | ".join(stats)
+                        html_content += "</p></div>"
+                        
+                        st.markdown(html_content, unsafe_allow_html=True)
             else:
                 # No gold rules matched - show general signals
                 st.info("⚠️ No patterns matched. Based on general signals:")
@@ -899,11 +910,9 @@ def main():
                     saved = st.form_submit_button("💾 SAVE MATCH", type="primary", use_container_width=True)
                 
                 if saved:
-                    # Add pattern_code to data before saving
-                    data['pattern_code'] = analysis.get('pattern_code')
+                    # Save match (NO importance_score or pattern_code - database handles it)
                     match_id = save_match(data, home_goals, away_goals)
                     if match_id:
-                        st.success(f"✅ Match #{match_id} saved! Pattern tracking updated.")
                         st.balloons()
                         st.session_state.pending_match = None
                         st.session_state.analysis_result = None
