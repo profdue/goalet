@@ -14,7 +14,7 @@ except ImportError:
     SUPABASE_AVAILABLE = False
     st.warning("⚠️ Run: pip install supabase")
 
-st.set_page_config(page_title="Discovery Hunter v23.0", page_icon="🏆", layout="wide")
+st.set_page_config(page_title="Discovery Hunter v24.0", page_icon="🏆", layout="wide")
 
 if SUPABASE_AVAILABLE:
     supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
@@ -117,6 +117,24 @@ GOLD_RULES = [
 # DATABASE FUNCTIONS FOR PATTERN DISCOVERY
 # ============================================================================
 
+def get_active_gold_rules():
+    """Get ONLY active gold rules from database"""
+    if supabase is None:
+        return pd.DataFrame()
+    
+    try:
+        result = supabase.table('gold_patterns')\
+            .select('*')\
+            .eq('status', 'ACTIVE')\
+            .execute()
+        
+        if result.data:
+            return pd.DataFrame(result.data)
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error getting active gold rules: {e}")
+        return pd.DataFrame()
+
 def get_pattern_stats(min_matches=5):
     """Get patterns from database with confidence scores"""
     if supabase is None:
@@ -145,10 +163,10 @@ def get_gold_pattern_performance():
         return pd.DataFrame()
     
     try:
-        # This is a complex join - we'll do it in two steps for simplicity
+        # Get active gold patterns
         gold_result = supabase.table('gold_patterns')\
             .select('*')\
-            .eq('active', True)\
+            .eq('status', 'ACTIVE')\
             .execute()
         
         if not gold_result.data:
@@ -312,11 +330,10 @@ def analyze_match(data):
         }
         matches.append(db_match)
     
-    # SECOND: Check gold rules
+    # SECOND: Check gold rules (only active ones from database would be better, but keeping fallback)
     for rule in GOLD_RULES:
         try:
             if rule['condition'](enhanced_data):
-                # Mark if this is also in database
                 rule_copy = rule.copy()
                 rule_copy['from_db'] = False
                 matches.append(rule_copy)
@@ -380,7 +397,7 @@ def analyze_match(data):
     }
 
 # ============================================================================
-# DATABASE FUNCTIONS - FIXED VERSION (NO importance_score)
+# DATABASE FUNCTIONS - FIXED VERSION
 # ============================================================================
 
 def save_match(data, home_goals=None, away_goals=None):
@@ -405,8 +422,6 @@ def save_match(data, home_goals=None, away_goals=None):
             'relegation': data.get('relegation', False),
             'result_entered': home_goals is not None,
             'discovery_notes': data.get('notes', '')
-            # importance_score is GENERATED - don't include it
-            # pattern_code is set by database trigger - don't include it
         }
         
         if home_goals is not None:
@@ -471,7 +486,7 @@ def get_rule_performance():
         except:
             return {}
         
-        # Separate by category using emoji and keyword detection
+        # Separate by category
         over_rules = []
         under_rules = []
         outcome_rules = []
@@ -480,16 +495,12 @@ def get_rule_performance():
         for rule in rules_data:
             name = rule.get('rule_name', '')
             
-            # OVER rules - look for 🔥 or OVER or DOUBLE PRESSURE
             if '🔥' in name or 'OVER' in name or 'DOUBLE PRESSURE' in name:
                 over_rules.append(rule)
-            # UNDER rules - look for ❄️ or UNDER
             elif '❄️' in name or 'UNDER' in name:
                 under_rules.append(rule)
-            # GRAY zone - look for ⚪ or GRAY
             elif '⚪' in name or 'GRAY' in name:
                 gray_rules.append(rule)
-            # Everything else is outcome
             else:
                 outcome_rules.append(rule)
         
@@ -575,7 +586,7 @@ def get_upcoming_matches(limit=10):
 # ============================================================================
 
 def main():
-    st.title("🏆 Discovery Hunter v23.0")
+    st.title("🏆 Discovery Hunter v24.0")
     st.markdown("### Self-Learning Pattern Discovery • 9 Gold Rules • Database Powered")
     
     if not SUPABASE_AVAILABLE:
@@ -598,15 +609,17 @@ def main():
             st.metric("Completed", completed.count if hasattr(completed, 'count') else 0)
             st.metric("Upcoming", upcoming.count if hasattr(upcoming, 'count') else 0)
             
-            # Show database patterns count
-            patterns = get_pattern_stats(3)
-            if not patterns.empty:
-                st.metric("Active Patterns", len(patterns))
-            
+            # Show ACTIVE gold rules from database
             st.markdown("---")
-            st.subheader("🏆 Gold Rules")
-            for rule in GOLD_RULES[:3]:  # Show top 3
-                st.success(f"{rule['emoji']} {rule['name'][:25]}...")
+            st.subheader("🏆 Active Gold Rules")
+            active_rules = get_active_gold_rules()
+            if not active_rules.empty:
+                for _, rule in active_rules.head(5).iterrows():
+                    st.success(f"✅ {rule['pattern_name'][:30]}...")
+            else:
+                # Fallback to hardcoded
+                for rule in GOLD_RULES[:3]:
+                    st.success(f"{rule['emoji']} {rule['name'][:25]}...")
         except Exception as e:
             st.info("No data yet")
         
@@ -614,7 +627,7 @@ def main():
         st.markdown("**TIER KEY**")
         st.markdown("1💥 Elite | 2⚡ Strong | 3📊 Average | 4🐢 Weak")
     
-    # Main tabs - Added Pattern Discovery and Gold Monitor
+    # Main tabs
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📝 New Match", 
         "📊 Rules Engine", 
@@ -658,9 +671,9 @@ def main():
             with col5:
                 relegation = st.checkbox("⚠️ Relegation", key="relegation_input")
             
-            # Show importance score preview (calculated, not stored)
+            # Show importance score preview
             importance_preview = (1 if elite else 0) + (1 if derby else 0) + (1 if relegation else 0)
-            st.caption(f"Importance Score Preview: {importance_preview} (will be auto-generated by database)")
+            st.caption(f"Importance Score Preview: {importance_preview} (auto-generated by database)")
             
             league_options = ["EPL", "BUNDESLIGA", "SERIE A", "LA LIGA", "LIGUE 1", "CHAMPIONSHIP", "OTHER LEAGUE"]
             league = st.selectbox("League", league_options, key="league_input")
@@ -678,7 +691,7 @@ def main():
             if not home_team or not away_team:
                 st.error("Please enter both team names")
             else:
-                # Store match data (NO importance_score - will be generated)
+                # Store match data
                 st.session_state.pending_match = {
                     'home_team': home_team, 
                     'away_team': away_team, 
@@ -699,18 +712,18 @@ def main():
                 st.session_state.analysis_result = analyze_match(st.session_state.pending_match)
                 st.rerun()
         
-        # SHOW PREDICTION RESULTS (before result entry)
+        # SHOW PREDICTION RESULTS
         if st.session_state.analysis_result and st.session_state.pending_match:
             data = st.session_state.pending_match
             analysis = st.session_state.analysis_result
             
             st.markdown("---")
             
-            # Display pattern code if available
+            # Display pattern code
             if 'pattern_code' in analysis:
                 st.info(f"📋 Pattern Code: **{analysis['pattern_code']}**")
             
-            # Display tiers in a nice format
+            # Display tiers
             col_t1, col_t2, col_t3 = st.columns(3)
             
             with col_t1:
@@ -732,7 +745,6 @@ def main():
                 if data.get('relegation', False):
                     st.markdown("⚠️ **Relegation Battle**")
                 
-                # Show importance preview
                 importance_val = (1 if data.get('elite', False) else 0) + (1 if data.get('derby', False) else 0) + (1 if data.get('relegation', False) else 0)
                 st.markdown(f"📊 **Importance: {importance_val}**")
             
@@ -758,30 +770,28 @@ def main():
                     
                     # Different styling for database vs gold rules
                     if rule.get('from_db', False):
-                        box_color = "#4CAF5015"  # Database green
+                        box_color = "#4CAF5015"
                         border_color = "#4CAF50"
                         source_badge = "📊 DB"
                     else:
                         if confidence >= 80:
-                            box_color = "#00ff0015"  # Green
+                            box_color = "#00ff0015"
                             border_color = "#00ff00"
                         elif confidence >= 75:
-                            box_color = "#ffff0015"  # Yellow
+                            box_color = "#ffff0015"
                             border_color = "#ffff00"
                         else:
-                            box_color = "#ffaa0015"  # Orange
+                            box_color = "#ffaa0015"
                             border_color = "#ffaa00"
                         source_badge = "🏆 GOLD"
                     
                     with st.container():
-                        # Build the HTML safely
                         html_content = f"""
                         <div style="background-color: {box_color}; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-left: 5px solid {border_color};">
                             <h3 style="margin:0">{rule['emoji']} {rule['name']} <span style="float:right">{source_badge} | {confidence}%</span></h3>
                             <p style="margin:5px 0 0 0; font-size: 18px;">
                         """
                         
-                        # Add outcome indicators
                         outcomes = []
                         if rule.get('over'):
                             outcomes.append("🔥 OVER 2.5")
@@ -806,7 +816,6 @@ def main():
                             <p style="margin:5px 0 0 0; color: #888;">
                         """
                         
-                        # Add stats
                         stats = []
                         if rule.get('matches'):
                             stats.append(f"Matches: {rule.get('matches')}")
@@ -822,7 +831,6 @@ def main():
                         
                         st.markdown(html_content, unsafe_allow_html=True)
             else:
-                # No gold rules matched - show general signals
                 st.info("⚠️ No patterns matched. Based on general signals:")
                 
                 col_s1, col_s2 = st.columns(2)
@@ -843,7 +851,6 @@ def main():
             st.markdown("---")
             st.subheader("💡 RECOMMENDATION")
             
-            # Find best pick
             best_pick = None
             for rule in analysis['matches']:
                 if rule.get('confidence', 0) >= 75:
@@ -910,7 +917,6 @@ def main():
                     saved = st.form_submit_button("💾 SAVE MATCH", type="primary", use_container_width=True)
                 
                 if saved:
-                    # Save match (NO importance_score or pattern_code - database handles it)
                     match_id = save_match(data, home_goals, away_goals)
                     if match_id:
                         st.balloons()
@@ -925,7 +931,6 @@ def main():
         rules = get_rule_performance()
         
         if rules:
-            # OVER RULES
             if rules.get('over'):
                 with st.expander("🔥 OVER 2.5 RULES", expanded=True):
                     over_df = pd.DataFrame(rules['over'])
@@ -936,7 +941,6 @@ def main():
                             use_container_width=True
                         )
             
-            # UNDER RULES
             if rules.get('under'):
                 with st.expander("❄️ UNDER 2.5 RULES", expanded=True):
                     under_df = pd.DataFrame(rules['under'])
@@ -947,7 +951,6 @@ def main():
                             use_container_width=True
                         )
             
-            # OUTCOME RULES
             if rules.get('outcome'):
                 with st.expander("🎯 MATCH OUTCOME RULES", expanded=False):
                     outcome_df = pd.DataFrame(rules['outcome'])
@@ -958,7 +961,6 @@ def main():
                             use_container_width=True
                         )
             
-            # GRAY ZONE
             if rules.get('gray'):
                 with st.expander("⚪ GRAY ZONE (No Edge)", expanded=False):
                     gray_df = pd.DataFrame(rules['gray'])
@@ -969,7 +971,6 @@ def main():
                             use_container_width=True
                         )
             
-            # Summary metrics
             st.markdown("---")
             col1, col2, col3, col4 = st.columns(4)
             
@@ -1005,7 +1006,6 @@ def main():
             
             st.dataframe(df, hide_index=True, use_container_width=True)
             
-            # Visualizations
             col1, col2 = st.columns(2)
             
             with col1:
@@ -1030,7 +1030,6 @@ def main():
         if matches:
             data = []
             for m in matches:
-                # Get rule summary
                 rules = m.get('rule_hits', {})
                 if isinstance(rules, str):
                     try:
@@ -1072,7 +1071,6 @@ def main():
         if matches:
             data = []
             for m in matches:
-                # Check for preview rules
                 rules = m.get('rule_hits', {})
                 if isinstance(rules, str):
                     try:
@@ -1109,14 +1107,12 @@ def main():
         patterns = get_pattern_stats(min_matches)
         
         if not patterns.empty:
-            # Summary metrics
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Total Patterns", len(patterns))
             col2.metric("Avg Confidence", f"{patterns['confidence_score'].mean():.1f}%")
             col3.metric("Highest Confidence", f"{patterns['confidence_score'].max():.1f}%")
             col4.metric("Most Matches", int(patterns['total_matches'].max()))
             
-            # Display patterns
             st.dataframe(
                 patterns[['pattern_code', 'pattern_name', 'total_matches', 
                          'current_home_win_rate', 'current_over_rate', 'current_btts_rate',
@@ -1125,7 +1121,6 @@ def main():
                 use_container_width=True
             )
             
-            # Visualization
             fig = px.scatter(patterns, x='total_matches', y='confidence_score',
                            size='confidence_score', color='home_trend',
                            hover_data=['pattern_code'],
@@ -1141,12 +1136,10 @@ def main():
         gold_perf = get_gold_pattern_performance()
         
         if not gold_perf.empty:
-            # Highlight degrading patterns
             degrading = gold_perf[abs(gold_perf['variance']) > 10]
             if not degrading.empty:
                 st.warning("⚠️ Some gold patterns are showing significant variance!")
             
-            # Display gold pattern performance
             st.dataframe(
                 gold_perf[['pattern_name', 'tier', 'discovery_matches', 'current_matches',
                           'discovery_rate', 'current_rate', 'variance', 'confidence', 'trend']],
@@ -1154,7 +1147,6 @@ def main():
                 use_container_width=True
             )
             
-            # Visualization
             fig = go.Figure()
             fig.add_trace(go.Bar(
                 name='Discovery Rate',
