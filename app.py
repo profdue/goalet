@@ -22,7 +22,60 @@ else:
     supabase = None
 
 # ============================================================================
-# ACTIVE RULES DEFINITIONS - With Database Name Mapping
+# PATTERN CODE TRANSLATION
+# ============================================================================
+
+def translate_pattern_code(pattern_code):
+    """Convert pattern code like 'F,T,F,0' to human-readable description"""
+    try:
+        parts = pattern_code.split(',')
+        if len(parts) != 4:
+            return pattern_code
+        
+        home = "No Home Advantage" if parts[0] == 'F' else "Home Advantage"
+        btts = "BTTS Pressure" if parts[2] == 'T' else "No BTTS Pressure"
+        overs = "Overs Pressure" if parts[1] == 'T' else "No Overs Pressure"
+        
+        importance = {
+            '0': 'Low Importance',
+            '1': 'Medium Importance',
+            '2': 'High Importance'
+        }.get(parts[3], f"Importance:{parts[3]}")
+        
+        # Determine the typical outcome based on pattern
+        if pattern_code == 'F,T,F,0':
+            outcome = "NO DRAW (Away bias)"
+            emoji = "✈️"
+        elif pattern_code == 'T,T,T,1':
+            outcome = "OVER 2.5 / BTTS (Home bias)"
+            emoji = "🔥"
+        elif pattern_code == 'F,F,F,0':
+            outcome = "HOME WIN (when winner occurs)"
+            emoji = "🏠"
+        elif pattern_code == 'F,T,T,0':
+            outcome = "NO DRAW (Away bias)"
+            emoji = "✈️"
+        elif pattern_code == 'F,T,T,1':
+            outcome = "NO DRAW (Strong Away bias)"
+            emoji = "✈️"
+        elif pattern_code == 'F,F,T,0':
+            outcome = "MIXED - Check stats"
+            emoji = "⚖️"
+        else:
+            outcome = "Track this pattern"
+            emoji = "📊"
+        
+        return {
+            'code': pattern_code,
+            'description': f"{home} • {btts} • {overs} • {importance}",
+            'outcome': outcome,
+            'emoji': emoji
+        }
+    except:
+        return {'code': pattern_code, 'description': pattern_code, 'outcome': 'Unknown', 'emoji': '📊'}
+
+# ============================================================================
+# ACTIVE RULES DEFINITIONS - With Human-Readable Names
 # ============================================================================
 
 ACTIVE_RULES = [
@@ -30,8 +83,8 @@ ACTIVE_RULES = [
         'id': 1,
         'name': 'GRAND UNDER 2.5',
         'db_name': '🏆 GRAND UNIFIED = UNDER 2.5',
-        'outcome': 'UNDER 2.5',
-        'emoji': '❄️',
+        'display_name': '❄️ GRAND UNDER 2.5',
+        'outcome': 'UNDER 2.5 Goals',
         'category': 'legacy',
         'bias': None
     },
@@ -39,76 +92,73 @@ ACTIVE_RULES = [
         'id': 2,
         'name': 'Elite + Home Adv',
         'db_name': '👑 ELITE HOME = DRAW/AWAY WIN',
-        'outcome': 'NO DRAW (Home bias)',
-        'emoji': '🏠',
+        'display_name': '🏠 Elite Home Advantage',
+        'outcome': 'NO DRAW (Home Wins Most)',
         'category': 'legacy',
-        'bias': 'Home 80% when winner'
+        'bias': 'Home wins 80% when not a draw'
     },
     {
         'id': 3,
         'name': 'F,T,F,0',
-        'db_name': None,  # From pattern_tracking
         'pattern_code': 'F,T,F,0',
-        'outcome': 'NO DRAW (Away bias)',
-        'emoji': '✈️',
+        'display_name': '✈️ No Home Adv + BTTS Pressure = Away Win Likely',
+        'outcome': 'NO DRAW (Away Bias)',
         'category': 'flag',
-        'bias': 'Away 60% when winner'
+        'bias': 'Away wins 60% when not a draw'
     },
     {
         'id': 4,
         'name': 'home_btts=2 & away_btts=2',
         'db_name': '🎯 HOME ELITE ATTACK = WIN/DRAW',
-        'outcome': 'OVER/BTTS (Away bias)',
-        'emoji': '🔥',
+        'display_name': '🔥 Both Teams Attack = Goals',
+        'outcome': 'OVER 2.5 / BTTS',
         'category': 'legacy',
-        'bias': 'Away 75% when winner'
+        'bias': 'Away wins 75% when winner occurs'
     },
     {
         'id': 5,
         'name': 'Elite + No Home Adv',
         'db_name': '✈️ AWAY ELITE ATTACK = WINNER',
-        'outcome': 'AWAY WIN / NO DRAW',
-        'emoji': '✈️',
+        'display_name': '✈️ Elite Away Team = Away Win',
+        'outcome': 'AWAY WIN Likely',
         'category': 'legacy',
-        'bias': 'Away 82% when winner'
+        'bias': 'Away wins 82%'
     },
     {
         'id': 6,
         'name': 'Away Win Lock',
         'db_name': '✈️ [4,3] + AWAY ATTACK = AWAY WIN',
+        'display_name': '🔒 Away Win Lock',
         'outcome': 'AWAY WIN',
-        'emoji': '✈️',
         'category': 'legacy',
-        'bias': 'Away 90% when winner'
+        'bias': 'Away wins 90%'
     },
     {
         'id': 7,
         'name': 'home_da=2 & away_da=3',
         'db_name': '⚠️ TIER2 HOME vs TIER3 AWAY = LOSS',
-        'outcome': 'NO DRAW (Home bias)',
-        'emoji': '🏠',
+        'display_name': '🏠 Home Defense Edge = Home Win',
+        'outcome': 'HOME WIN / NO DRAW',
         'category': 'legacy',
-        'bias': 'Home 67% when winner'
+        'bias': 'Home wins 67%'
     },
     {
         'id': 8,
         'name': 'T,T,T,1',
-        'db_name': None,  # From pattern_tracking
         'pattern_code': 'T,T,T,1',
+        'display_name': '🔥 All Pressure + Medium Importance = Goals',
         'outcome': 'OVER 2.5 / BTTS',
-        'emoji': '🔥',
         'category': 'flag',
-        'bias': 'Home 75% when winner'
+        'bias': 'Home wins 75% when goals happen'
     },
     {
         'id': 9,
         'name': 'F,F,F,0',
-        'db_name': None,  # From pattern_tracking
         'pattern_code': 'F,F,F,0',
+        'display_name': '🏠 No Flags = Home Win Lock',
         'outcome': 'HOME WIN',
-        'emoji': '🏠',
         'category': 'flag',
-        'bias': 'Home 100% when winner'
+        'bias': 'Home wins 100% when winner occurs'
     }
 ]
 
@@ -176,7 +226,7 @@ def get_rule_performance():
                         hits = (rule_df['home_goals'] + rule_df['away_goals'] >= 3).sum()
                     elif 'AWAY WIN' in rule['outcome']:
                         hits = (rule_df['away_goals'] > rule_df['home_goals']).sum()
-                    elif 'HOME WIN' in rule['outcome'] or 'Home bias' in rule['outcome']:
+                    elif 'HOME WIN' in rule['outcome']:
                         hits = (rule_df['home_goals'] > rule_df['away_goals']).sum()
                     elif 'NO DRAW' in rule['outcome']:
                         hits = (rule_df['home_goals'] != rule_df['away_goals']).sum()
@@ -187,64 +237,13 @@ def get_rule_performance():
                     
                     hit_rate = round((hits / total) * 100, 1)
                     
-                    # Last 10 performance
-                    last10 = rule_df.head(10)
-                    last10_hits = 0
-                    if 'UNDER' in rule['outcome']:
-                        last10_hits = (last10['home_goals'] + last10['away_goals'] < 3).sum()
-                    elif 'OVER' in rule['outcome']:
-                        last10_hits = (last10['home_goals'] + last10['away_goals'] >= 3).sum()
-                    elif 'AWAY WIN' in rule['outcome']:
-                        last10_hits = (last10['away_goals'] > last10['home_goals']).sum()
-                    elif 'HOME WIN' in rule['outcome'] or 'Home bias' in rule['outcome']:
-                        last10_hits = (last10['home_goals'] > last10['away_goals']).sum()
-                    elif 'NO DRAW' in rule['outcome']:
-                        last10_hits = (last10['home_goals'] != last10['away_goals']).sum()
-                    
-                    last10_rate = round((last10_hits / len(last10)) * 100, 1) if len(last10) > 0 else 0
-                    
-                    # Trend (compare last 5 to previous 5)
-                    if len(rule_df) >= 10:
-                        last5 = rule_df.head(5)
-                        prev5 = rule_df.iloc[5:10]
-                        
-                        last5_hits = 0
-                        prev5_hits = 0
-                        
-                        if 'UNDER' in rule['outcome']:
-                            last5_hits = (last5['home_goals'] + last5['away_goals'] < 3).sum()
-                            prev5_hits = (prev5['home_goals'] + prev5['away_goals'] < 3).sum()
-                        elif 'OVER' in rule['outcome']:
-                            last5_hits = (last5['home_goals'] + last5['away_goals'] >= 3).sum()
-                            prev5_hits = (prev5['home_goals'] + prev5['away_goals'] >= 3).sum()
-                        elif 'AWAY WIN' in rule['outcome']:
-                            last5_hits = (last5['away_goals'] > last5['home_goals']).sum()
-                            prev5_hits = (prev5['away_goals'] > prev5['home_goals']).sum()
-                        elif 'HOME WIN' in rule['outcome'] or 'Home bias' in rule['outcome']:
-                            last5_hits = (last5['home_goals'] > last5['away_goals']).sum()
-                            prev5_hits = (prev5['home_goals'] > prev5['away_goals']).sum()
-                        elif 'NO DRAW' in rule['outcome']:
-                            last5_hits = (last5['home_goals'] != last5['away_goals']).sum()
-                            prev5_hits = (prev5['home_goals'] != prev5['away_goals']).sum()
-                        
-                        if last5_hits > prev5_hits:
-                            trend = "📈 UP"
-                        elif last5_hits < prev5_hits:
-                            trend = "📉 DOWN"
-                        else:
-                            trend = "➡️ STABLE"
-                    else:
-                        trend = "🆕 NEW"
-                    
                     performance_data.append({
-                        'Rule': rule['name'],
-                        'Outcome': f"{rule['emoji']} {rule['outcome']}",
+                        'Rule': rule['display_name'],
+                        'Outcome': rule['outcome'],
                         'Bias': rule['bias'] if rule['bias'] else '-',
                         'Matches': total,
                         'Hits': hits,
-                        'Hit Rate': f"{hit_rate}%",
-                        'Last 10': f"{last10_hits}/{len(last10)} ({last10_rate}%)" if len(last10) > 0 else '-',
-                        'Trend': trend
+                        'Hit Rate': f"{hit_rate}%"
                     })
             
             elif rule['category'] == 'flag' and not pattern_df.empty:
@@ -255,26 +254,23 @@ def get_rule_performance():
                     total = row.get('total_matches', 0)
                     
                     if total >= 3:
-                        # Calculate hits based on confidence/rates
+                        # Calculate hits based on rates
                         if 'OVER' in rule['outcome']:
                             hit_rate = row.get('current_over_rate', 0)
-                            hits = round(total * hit_rate / 100)
                         elif 'HOME WIN' in rule['outcome']:
                             hit_rate = row.get('current_home_win_rate', 0)
-                            hits = round(total * hit_rate / 100)
                         else:
                             hit_rate = row.get('confidence_score', 0)
-                            hits = round(total * hit_rate / 100)
+                        
+                        hits = round(total * hit_rate / 100) if hit_rate else 0
                         
                         performance_data.append({
-                            'Rule': rule['name'],
-                            'Outcome': f"{rule['emoji']} {rule['outcome']}",
+                            'Rule': rule['display_name'],
+                            'Outcome': rule['outcome'],
                             'Bias': rule['bias'] if rule['bias'] else '-',
                             'Matches': total,
                             'Hits': hits,
-                            'Hit Rate': f"{hit_rate:.1f}%",
-                            'Last 10': '-',
-                            'Trend': row.get('home_trend', 'STABLE')
+                            'Hit Rate': f"{hit_rate:.1f}%" if hit_rate else '0%'
                         })
         
         return pd.DataFrame(performance_data)
@@ -297,29 +293,15 @@ def get_pattern_stats(min_matches=5):
         
         if result.data:
             df = pd.DataFrame(result.data)
-            # Add readable names for patterns
-            df['pattern_name'] = df['pattern_code'].apply(lambda x: decode_pattern_code(x))
+            # Add human-readable descriptions
+            df['description'] = df['pattern_code'].apply(lambda x: translate_pattern_code(x)['description'])
+            df['prediction'] = df['pattern_code'].apply(lambda x: translate_pattern_code(x)['outcome'])
+            df['emoji'] = df['pattern_code'].apply(lambda x: translate_pattern_code(x)['emoji'])
             return df
         return pd.DataFrame()
     except Exception as e:
         st.error(f"Error getting pattern stats: {e}")
         return pd.DataFrame()
-
-def decode_pattern_code(code):
-    """Convert pattern code to readable description"""
-    try:
-        parts = code.split(',')
-        if len(parts) != 4:
-            return code
-        
-        home = "Home Adv" if parts[0] == 'T' else "No Home Adv"
-        over = "Over Press" if parts[1] == 'T' else "No Over Press"
-        btts = "BTTS Press" if parts[2] == 'T' else "No BTTS Press"
-        imp = f"Imp:{parts[3]}"
-        
-        return f"{home} | {over} | {btts} | {imp}"
-    except:
-        return code
 
 def get_pattern_prediction(pattern_code):
     """Get prediction from database for a specific pattern"""
@@ -417,20 +399,29 @@ def analyze_match(data):
     matches = []
     
     if db_pattern and db_pattern.get('total_matches', 0) >= 3:
+        # Translate the pattern code
+        translation = translate_pattern_code(pattern_code)
+        
         db_match = {
-            'name': f"📊 Database Pattern: {pattern_code}",
+            'name': translation['display_name'] if 'display_name' in translation else f"{translation['emoji']} {translation['outcome']}",
+            'description': translation['description'],
+            'outcome': translation['outcome'],
+            'emoji': translation['emoji'],
             'from_db': True,
-            'over': db_pattern.get('current_over_rate', 0) >= 60,
-            'under': db_pattern.get('current_over_rate', 0) <= 40,
-            'btts': db_pattern.get('current_btts_rate', 0) >= 60,
             'confidence': db_pattern.get('confidence_score', 70),
             'matches': db_pattern.get('total_matches', 0),
-            'emoji': '📊',
             'home_win_rate': db_pattern.get('current_home_win_rate', 50),
             'over_rate': db_pattern.get('current_over_rate', 50),
             'btts_rate': db_pattern.get('current_btts_rate', 50)
         }
         matches.append(db_match)
+    
+    # Also check active rules that might not be in pattern_tracking
+    for rule in ACTIVE_RULES:
+        if rule['category'] == 'legacy':
+            # Legacy rules are handled separately in performance tab
+            # For predictions, we'd need to check conditions
+            pass
     
     return {
         'matches': matches,
@@ -614,17 +605,7 @@ def main():
             st.dataframe(
                 performance_df,
                 hide_index=True,
-                use_container_width=True,
-                column_config={
-                    'Rule': 'Rule Name',
-                    'Outcome': 'What to Bet',
-                    'Bias': 'When Winner',
-                    'Matches': 'Total',
-                    'Hits': 'Hits',
-                    'Hit Rate': 'Success %',
-                    'Last 10': 'Last 10 Form',
-                    'Trend': 'Trend'
-                }
+                use_container_width=True
             )
             
             # Visual representation
@@ -722,18 +703,18 @@ def main():
             
             if analysis['matches']:
                 for match in analysis['matches']:
-                    if match.get('from_db'):
-                        st.info(f"📊 **Database Pattern:** {match['name']}")
-                        st.write(f"Confidence: {match['confidence']}% | Matches: {match['matches']}")
-                    else:
-                        st.success(f"{match['emoji']} **{match['name']}**")
-                        if match.get('outcome'):
-                            st.write(f"🎯 **Bet:** {match['outcome']}")
-                        if match.get('bias'):
-                            st.write(f"📊 Bias: {match['bias']}")
-                    st.divider()
+                    # Create a nice prediction box
+                    with st.container():
+                        st.markdown(f"""
+                        <div style="background-color: #1e3a5f; padding: 20px; border-radius: 10px; margin-bottom: 15px; border-left: 5px solid #4CAF50;">
+                            <h3 style="margin:0; color: white;">{match['emoji']} {match['name']}</h3>
+                            <p style="margin:10px 0 5px 0; color: #ddd; font-size: 16px;">{match.get('description', '')}</p>
+                            <p style="margin:5px 0; color: white; font-size: 20px; font-weight: bold;">🎯 {match['outcome']}</p>
+                            <p style="margin:10px 0 0 0; color: #aaa;">Confidence: {match['confidence']:.1f}% based on {match['matches']} matches</p>
+                        </div>
+                        """, unsafe_allow_html=True)
             else:
-                st.warning("No matching patterns found")
+                st.warning("No matching patterns found for this match")
             
             # Enter result
             st.markdown("---")
@@ -777,15 +758,19 @@ def main():
         if not patterns.empty:
             st.metric("Emerging Patterns Found", len(patterns))
             
-            st.dataframe(
-                patterns[['pattern_code', 'total_matches', 'current_home_win_rate', 
-                         'current_over_rate', 'current_btts_rate', 'confidence_score', 'home_trend']],
-                hide_index=True,
-                use_container_width=True
-            )
+            # Show patterns with human-readable descriptions
+            display_df = patterns[['emoji', 'prediction', 'description', 'total_matches', 
+                                  'current_home_win_rate', 'current_over_rate', 'current_btts_rate', 
+                                  'confidence_score', 'home_trend']].copy()
+            
+            display_df.columns = ['', 'Prediction', 'Pattern Details', 'Matches', 
+                                 'Home Win %', 'Over %', 'BTTS %', 'Confidence', 'Trend']
+            
+            st.dataframe(display_df, hide_index=True, use_container_width=True)
             
             fig = px.scatter(patterns, x='total_matches', y='confidence_score',
                            size='confidence_score', color='home_trend',
+                           hover_data=['prediction'],
                            title='Emerging Patterns - Confidence vs Sample Size')
             st.plotly_chart(fig, use_container_width=True)
         else:
