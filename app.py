@@ -22,96 +22,93 @@ else:
     supabase = None
 
 # ============================================================================
-# ACTIVE RULES DEFINITIONS - With Outcomes Clearly Defined
+# ACTIVE RULES DEFINITIONS - With Database Name Mapping
 # ============================================================================
 
 ACTIVE_RULES = [
     {
         'id': 1,
         'name': 'GRAND UNDER 2.5',
+        'db_name': '🏆 GRAND UNIFIED = UNDER 2.5',
         'outcome': 'UNDER 2.5',
         'emoji': '❄️',
-        'condition': lambda d: True,  # Replace with actual condition
+        'category': 'legacy',
         'bias': None
     },
     {
         'id': 2,
         'name': 'Elite + Home Adv',
+        'db_name': '👑 ELITE HOME = DRAW/AWAY WIN',
         'outcome': 'NO DRAW (Home bias)',
         'emoji': '🏠',
-        'condition': lambda d: d.get('elite') and d.get('home_adv_flag', False),
+        'category': 'legacy',
         'bias': 'Home 80% when winner'
     },
     {
         'id': 3,
         'name': 'F,T,F,0',
+        'db_name': None,  # From pattern_tracking
+        'pattern_code': 'F,T,F,0',
         'outcome': 'NO DRAW (Away bias)',
         'emoji': '✈️',
-        'condition': lambda d: (
-            not d.get('home_adv_flag', True) and 
-            d.get('btts_pressure_flag', False) and 
-            not d.get('overs_pressure_flag', True) and 
-            d.get('importance_score') == 0
-        ),
+        'category': 'flag',
         'bias': 'Away 60% when winner'
     },
     {
         'id': 4,
         'name': 'home_btts=2 & away_btts=2',
+        'db_name': '🎯 HOME ELITE ATTACK = WIN/DRAW',
         'outcome': 'OVER/BTTS (Away bias)',
         'emoji': '🔥',
-        'condition': lambda d: d.get('home_btts_tier') == 2 and d.get('away_btts_tier') == 2,
+        'category': 'legacy',
         'bias': 'Away 75% when winner'
     },
     {
         'id': 5,
         'name': 'Elite + No Home Adv',
+        'db_name': '✈️ AWAY ELITE ATTACK = WINNER',
         'outcome': 'AWAY WIN / NO DRAW',
         'emoji': '✈️',
-        'condition': lambda d: d.get('elite') and not d.get('home_adv_flag', True),
+        'category': 'legacy',
         'bias': 'Away 82% when winner'
     },
     {
         'id': 6,
         'name': 'Away Win Lock',
+        'db_name': '✈️ [4,3] + AWAY ATTACK = AWAY WIN',
         'outcome': 'AWAY WIN',
         'emoji': '✈️',
-        'condition': lambda d: d.get('home_da_tier') == 3 and d.get('away_da_tier') == 2,
+        'category': 'legacy',
         'bias': 'Away 90% when winner'
     },
     {
         'id': 7,
         'name': 'home_da=2 & away_da=3',
+        'db_name': '⚠️ TIER2 HOME vs TIER3 AWAY = LOSS',
         'outcome': 'NO DRAW (Home bias)',
         'emoji': '🏠',
-        'condition': lambda d: d.get('home_da_tier') == 2 and d.get('away_da_tier') == 3,
+        'category': 'legacy',
         'bias': 'Home 67% when winner'
     },
     {
         'id': 8,
         'name': 'T,T,T,1',
+        'db_name': None,  # From pattern_tracking
+        'pattern_code': 'T,T,T,1',
         'outcome': 'OVER 2.5 / BTTS',
         'emoji': '🔥',
-        'condition': lambda d: (
-            d.get('home_adv_flag', False) and 
-            d.get('btts_pressure_flag', False) and 
-            d.get('overs_pressure_flag', False) and 
-            d.get('importance_score') == 1
-        ),
+        'category': 'flag',
         'bias': 'Home 75% when winner'
     },
     {
         'id': 9,
-        'name': 'F,T,T,1',
-        'outcome': 'NO DRAW (Away bias)',
-        'emoji': '✈️',
-        'condition': lambda d: (
-            not d.get('home_adv_flag', True) and 
-            d.get('btts_pressure_flag', False) and 
-            d.get('overs_pressure_flag', False) and 
-            d.get('importance_score') == 1
-        ),
-        'bias': 'Away 86% when winner'
+        'name': 'F,F,F,0',
+        'db_name': None,  # From pattern_tracking
+        'pattern_code': 'F,F,F,0',
+        'outcome': 'HOME WIN',
+        'emoji': '🏠',
+        'category': 'flag',
+        'bias': 'Home 100% when winner'
     }
 ]
 
@@ -137,117 +134,148 @@ def get_rule_performance():
         
         df = pd.DataFrame(matches.data)
         
-        # Calculate performance for each active rule
+        # Get pattern tracking data for flag-based rules
+        patterns = supabase.table('pattern_tracking')\
+            .select('*')\
+            .execute()
+        
+        pattern_df = pd.DataFrame(patterns.data) if patterns.data else pd.DataFrame()
+        
         performance_data = []
         
         for rule in ACTIVE_RULES:
-            # For each rule, we need to know which matches it applied to
-            # This depends on how you track rule hits in your database
-            # Assuming rule_hits column stores which rules fired
-            
-            rule_matches = []
-            for _, match in df.iterrows():
-                rule_hits = match.get('rule_hits', {})
-                if isinstance(rule_hits, str):
-                    try:
-                        rule_hits = json.loads(rule_hits)
-                    except:
-                        rule_hits = {}
-                
-                # Check if this rule was active for this match
-                # This logic depends on how you store rule hits
-                rule_active = False
-                for hit in rule_hits.values() if isinstance(rule_hits, dict) else []:
-                    if hit.get('name') == rule['name']:
-                        rule_active = True
-                        break
-                
-                if rule_active:
-                    rule_matches.append(match)
-            
-            if rule_matches:
-                rule_df = pd.DataFrame(rule_matches)
-                total = len(rule_df)
-                
-                # Calculate hits based on rule outcome
-                if 'UNDER' in rule['outcome']:
-                    hits = (rule_df['home_goals'] + rule_df['away_goals'] < 3).sum()
-                elif 'OVER' in rule['outcome']:
-                    hits = (rule_df['home_goals'] + rule_df['away_goals'] >= 3).sum()
-                elif 'AWAY WIN' in rule['outcome']:
-                    hits = (rule_df['away_goals'] > rule_df['home_goals']).sum()
-                elif 'HOME WIN' in rule['outcome'] or 'Home bias' in rule['outcome']:
-                    hits = (rule_df['home_goals'] > rule_df['away_goals']).sum()
-                elif 'NO DRAW' in rule['outcome']:
-                    hits = (rule_df['home_goals'] != rule_df['away_goals']).sum()
-                elif 'BTTS' in rule['outcome']:
-                    hits = ((rule_df['home_goals'] > 0) & (rule_df['away_goals'] > 0)).sum()
-                else:
-                    hits = 0
-                
-                hit_rate = round((hits / total) * 100, 1)
-                
-                # Last 10 performance
-                last10 = rule_df.head(10)
-                last10_hits = 0
-                if 'UNDER' in rule['outcome']:
-                    last10_hits = (last10['home_goals'] + last10['away_goals'] < 3).sum()
-                elif 'OVER' in rule['outcome']:
-                    last10_hits = (last10['home_goals'] + last10['away_goals'] >= 3).sum()
-                elif 'AWAY WIN' in rule['outcome']:
-                    last10_hits = (last10['away_goals'] > last10['home_goals']).sum()
-                elif 'HOME WIN' in rule['outcome'] or 'Home bias' in rule['outcome']:
-                    last10_hits = (last10['home_goals'] > last10['away_goals']).sum()
-                elif 'NO DRAW' in rule['outcome']:
-                    last10_hits = (last10['home_goals'] != last10['away_goals']).sum()
-                elif 'BTTS' in rule['outcome']:
-                    last10_hits = ((last10['home_goals'] > 0) & (last10['away_goals'] > 0)).sum()
-                
-                last10_rate = round((last10_hits / len(last10)) * 100, 1) if len(last10) > 0 else 0
-                
-                # Trend (compare last 5 to previous 5)
-                if len(rule_df) >= 10:
-                    last5 = rule_df.head(5)
-                    prev5 = rule_df.iloc[5:10]
+            if rule['category'] == 'legacy':
+                # Get performance from rule_hits
+                rule_matches = []
+                for _, match in df.iterrows():
+                    rule_hits = match.get('rule_hits', {})
+                    if isinstance(rule_hits, str):
+                        try:
+                            rule_hits = json.loads(rule_hits)
+                        except:
+                            rule_hits = {}
                     
-                    last5_hits = 0
-                    prev5_hits = 0
+                    # Check if this rule's db_name appears in rule_hits
+                    rule_active = False
+                    for hit_key, hit_value in rule_hits.items():
+                        if isinstance(hit_value, dict) and hit_value.get('name') == rule['db_name']:
+                            rule_active = True
+                            break
                     
+                    if rule_active:
+                        rule_matches.append(match)
+                
+                if rule_matches:
+                    rule_df = pd.DataFrame(rule_matches)
+                    total = len(rule_df)
+                    
+                    # Calculate hits based on rule outcome
                     if 'UNDER' in rule['outcome']:
-                        last5_hits = (last5['home_goals'] + last5['away_goals'] < 3).sum()
-                        prev5_hits = (prev5['home_goals'] + prev5['away_goals'] < 3).sum()
+                        hits = (rule_df['home_goals'] + rule_df['away_goals'] < 3).sum()
                     elif 'OVER' in rule['outcome']:
-                        last5_hits = (last5['home_goals'] + last5['away_goals'] >= 3).sum()
-                        prev5_hits = (prev5['home_goals'] + prev5['away_goals'] >= 3).sum()
+                        hits = (rule_df['home_goals'] + rule_df['away_goals'] >= 3).sum()
                     elif 'AWAY WIN' in rule['outcome']:
-                        last5_hits = (last5['away_goals'] > last5['home_goals']).sum()
-                        prev5_hits = (prev5['away_goals'] > prev5['home_goals']).sum()
+                        hits = (rule_df['away_goals'] > rule_df['home_goals']).sum()
                     elif 'HOME WIN' in rule['outcome'] or 'Home bias' in rule['outcome']:
-                        last5_hits = (last5['home_goals'] > last5['away_goals']).sum()
-                        prev5_hits = (prev5['home_goals'] > prev5['away_goals']).sum()
+                        hits = (rule_df['home_goals'] > rule_df['away_goals']).sum()
                     elif 'NO DRAW' in rule['outcome']:
-                        last5_hits = (last5['home_goals'] != last5['away_goals']).sum()
-                        prev5_hits = (prev5['home_goals'] != prev5['away_goals']).sum()
-                    
-                    if last5_hits > prev5_hits:
-                        trend = "📈 UP"
-                    elif last5_hits < prev5_hits:
-                        trend = "📉 DOWN"
+                        hits = (rule_df['home_goals'] != rule_df['away_goals']).sum()
+                    elif 'BTTS' in rule['outcome']:
+                        hits = ((rule_df['home_goals'] > 0) & (rule_df['away_goals'] > 0)).sum()
                     else:
-                        trend = "➡️ STABLE"
-                else:
-                    trend = "🆕 NEW"
-                
-                performance_data.append({
-                    'Rule': rule['name'],
-                    'Outcome': f"{rule['emoji']} {rule['outcome']}",
-                    'Bias': rule['bias'] if rule['bias'] else '-',
-                    'Matches': total,
-                    'Hits': hits,
-                    'Hit Rate': f"{hit_rate}%",
-                    'Last 10': f"{last10_hits}/{len(last10)} ({last10_rate}%)",
-                    'Trend': trend
-                })
+                        hits = 0
+                    
+                    hit_rate = round((hits / total) * 100, 1)
+                    
+                    # Last 10 performance
+                    last10 = rule_df.head(10)
+                    last10_hits = 0
+                    if 'UNDER' in rule['outcome']:
+                        last10_hits = (last10['home_goals'] + last10['away_goals'] < 3).sum()
+                    elif 'OVER' in rule['outcome']:
+                        last10_hits = (last10['home_goals'] + last10['away_goals'] >= 3).sum()
+                    elif 'AWAY WIN' in rule['outcome']:
+                        last10_hits = (last10['away_goals'] > last10['home_goals']).sum()
+                    elif 'HOME WIN' in rule['outcome'] or 'Home bias' in rule['outcome']:
+                        last10_hits = (last10['home_goals'] > last10['away_goals']).sum()
+                    elif 'NO DRAW' in rule['outcome']:
+                        last10_hits = (last10['home_goals'] != last10['away_goals']).sum()
+                    
+                    last10_rate = round((last10_hits / len(last10)) * 100, 1) if len(last10) > 0 else 0
+                    
+                    # Trend (compare last 5 to previous 5)
+                    if len(rule_df) >= 10:
+                        last5 = rule_df.head(5)
+                        prev5 = rule_df.iloc[5:10]
+                        
+                        last5_hits = 0
+                        prev5_hits = 0
+                        
+                        if 'UNDER' in rule['outcome']:
+                            last5_hits = (last5['home_goals'] + last5['away_goals'] < 3).sum()
+                            prev5_hits = (prev5['home_goals'] + prev5['away_goals'] < 3).sum()
+                        elif 'OVER' in rule['outcome']:
+                            last5_hits = (last5['home_goals'] + last5['away_goals'] >= 3).sum()
+                            prev5_hits = (prev5['home_goals'] + prev5['away_goals'] >= 3).sum()
+                        elif 'AWAY WIN' in rule['outcome']:
+                            last5_hits = (last5['away_goals'] > last5['home_goals']).sum()
+                            prev5_hits = (prev5['away_goals'] > prev5['home_goals']).sum()
+                        elif 'HOME WIN' in rule['outcome'] or 'Home bias' in rule['outcome']:
+                            last5_hits = (last5['home_goals'] > last5['away_goals']).sum()
+                            prev5_hits = (prev5['home_goals'] > prev5['away_goals']).sum()
+                        elif 'NO DRAW' in rule['outcome']:
+                            last5_hits = (last5['home_goals'] != last5['away_goals']).sum()
+                            prev5_hits = (prev5['home_goals'] != prev5['away_goals']).sum()
+                        
+                        if last5_hits > prev5_hits:
+                            trend = "📈 UP"
+                        elif last5_hits < prev5_hits:
+                            trend = "📉 DOWN"
+                        else:
+                            trend = "➡️ STABLE"
+                    else:
+                        trend = "🆕 NEW"
+                    
+                    performance_data.append({
+                        'Rule': rule['name'],
+                        'Outcome': f"{rule['emoji']} {rule['outcome']}",
+                        'Bias': rule['bias'] if rule['bias'] else '-',
+                        'Matches': total,
+                        'Hits': hits,
+                        'Hit Rate': f"{hit_rate}%",
+                        'Last 10': f"{last10_hits}/{len(last10)} ({last10_rate}%)" if len(last10) > 0 else '-',
+                        'Trend': trend
+                    })
+            
+            elif rule['category'] == 'flag' and not pattern_df.empty:
+                # Get performance from pattern_tracking
+                pattern_row = pattern_df[pattern_df['pattern_code'] == rule['pattern_code']]
+                if not pattern_row.empty:
+                    row = pattern_row.iloc[0]
+                    total = row.get('total_matches', 0)
+                    
+                    if total >= 3:
+                        # Calculate hits based on confidence/rates
+                        if 'OVER' in rule['outcome']:
+                            hit_rate = row.get('current_over_rate', 0)
+                            hits = round(total * hit_rate / 100)
+                        elif 'HOME WIN' in rule['outcome']:
+                            hit_rate = row.get('current_home_win_rate', 0)
+                            hits = round(total * hit_rate / 100)
+                        else:
+                            hit_rate = row.get('confidence_score', 0)
+                            hits = round(total * hit_rate / 100)
+                        
+                        performance_data.append({
+                            'Rule': rule['name'],
+                            'Outcome': f"{rule['emoji']} {rule['outcome']}",
+                            'Bias': rule['bias'] if rule['bias'] else '-',
+                            'Matches': total,
+                            'Hits': hits,
+                            'Hit Rate': f"{hit_rate:.1f}%",
+                            'Last 10': '-',
+                            'Trend': row.get('home_trend', 'STABLE')
+                        })
         
         return pd.DataFrame(performance_data)
     
@@ -403,21 +431,6 @@ def analyze_match(data):
             'btts_rate': db_pattern.get('current_btts_rate', 50)
         }
         matches.append(db_match)
-    
-    # Check active rules
-    for rule in ACTIVE_RULES:
-        try:
-            if rule['condition'](enhanced_data):
-                matches.append({
-                    'name': rule['name'],
-                    'outcome': rule['outcome'],
-                    'emoji': rule['emoji'],
-                    'bias': rule['bias'],
-                    'from_db': False,
-                    'confidence': 85  # You could pull this from DB
-                })
-        except:
-            continue
     
     return {
         'matches': matches,
@@ -576,12 +589,11 @@ def main():
         except Exception as e:
             st.info("No data yet")
     
-    # Main tabs - SIMPLIFIED
-    tab1, tab2, tab3, tab4 = st.tabs([
+    # Main tabs - SIMPLIFIED to 3
+    tab1, tab2, tab3 = st.tabs([
         "🏆 ACTIVE RULES",  # Your 9 rules with performance
         "📝 NEW MATCH",      # Enter matches & get predictions
-        "🔍 DISCOVERY",      # New patterns emerging
-        "📋 HISTORY"         # Recent matches & stats
+        "🔍 PATTERN DISCOVERY" # New patterns emerging
     ])
     
     # ===== TAB 1: ACTIVE RULES PERFORMANCE =====
@@ -715,7 +727,8 @@ def main():
                         st.write(f"Confidence: {match['confidence']}% | Matches: {match['matches']}")
                     else:
                         st.success(f"{match['emoji']} **{match['name']}**")
-                        st.write(f"🎯 **Bet:** {match['outcome']}")
+                        if match.get('outcome'):
+                            st.write(f"🎯 **Bet:** {match['outcome']}")
                         if match.get('bias'):
                             st.write(f"📊 Bias: {match['bias']}")
                     st.divider()
@@ -777,50 +790,6 @@ def main():
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info(f"No patterns found with {min_matches}+ matches. Keep adding data!")
-    
-    # ===== TAB 4: HISTORY =====
-    with tab4:
-        st.header("📋 Recent Matches")
-        
-        matches = get_recent_matches(20)
-        if matches:
-            data = []
-            for m in matches:
-                total_goals = m.get('home_goals', 0) + m.get('away_goals', 0)
-                
-                data.append({
-                    'Date': m.get('match_date', '')[-5:] if m.get('match_date') else '?',
-                    'Home': m.get('home_team', ''),
-                    'Score': f"{m.get('home_goals', 0)}-{m.get('away_goals', 0)}",
-                    'Away': m.get('away_team', ''),
-                    'League': m.get('league', ''),
-                    'Total': total_goals,
-                    'Pattern': m.get('pattern_code', '')[:8] if m.get('pattern_code') else ''
-                })
-            
-            df = pd.DataFrame(data)
-            st.dataframe(df, hide_index=True, use_container_width=True)
-            
-            # League stats
-            st.markdown("---")
-            st.subheader("📈 League Statistics")
-            
-            stats = get_league_stats()
-            if stats:
-                stats_data = []
-                for league, stat in stats.items():
-                    stats_data.append({
-                        'League': league,
-                        'Matches': stat['matches'],
-                        'Avg Goals': stat['avg_goals'],
-                        'BTTS %': stat['btts_rate'],
-                        'Over %': stat['over_rate']
-                    })
-                
-                stats_df = pd.DataFrame(stats_data)
-                st.dataframe(stats_df, hide_index=True, use_container_width=True)
-        else:
-            st.info("No completed matches yet.")
 
 if __name__ == "__main__":
     main()
