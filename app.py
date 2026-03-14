@@ -22,59 +22,6 @@ else:
     supabase = None
 
 # ============================================================================
-# PATTERN CODE TRANSLATION
-# ============================================================================
-
-def translate_pattern_code(pattern_code):
-    """Convert pattern code like 'F,T,F,0' to human-readable description"""
-    try:
-        parts = pattern_code.split(',')
-        if len(parts) != 4:
-            return pattern_code
-        
-        home = "No Home Advantage" if parts[0] == 'F' else "Home Advantage"
-        btts = "BTTS Pressure" if parts[2] == 'T' else "No BTTS Pressure"
-        overs = "Overs Pressure" if parts[1] == 'T' else "No Overs Pressure"
-        
-        importance = {
-            '0': 'Low Importance',
-            '1': 'Medium Importance',
-            '2': 'High Importance'
-        }.get(parts[3], f"Importance:{parts[3]}")
-        
-        # Determine the typical outcome based on pattern
-        if pattern_code == 'F,T,F,0':
-            outcome = "NO DRAW (Away bias)"
-            emoji = "✈️"
-        elif pattern_code == 'T,T,T,1':
-            outcome = "OVER 2.5 / BTTS (Home bias)"
-            emoji = "🔥"
-        elif pattern_code == 'F,F,F,0':
-            outcome = "HOME WIN (when winner occurs)"
-            emoji = "🏠"
-        elif pattern_code == 'F,T,T,0':
-            outcome = "NO DRAW (Away bias)"
-            emoji = "✈️"
-        elif pattern_code == 'F,T,T,1':
-            outcome = "NO DRAW (Strong Away bias)"
-            emoji = "✈️"
-        elif pattern_code == 'F,F,T,0':
-            outcome = "MIXED - Check stats"
-            emoji = "⚖️"
-        else:
-            outcome = "Track this pattern"
-            emoji = "📊"
-        
-        return {
-            'code': pattern_code,
-            'description': f"{home} • {btts} • {overs} • {importance}",
-            'outcome': outcome,
-            'emoji': emoji
-        }
-    except:
-        return {'code': pattern_code, 'description': pattern_code, 'outcome': 'Unknown', 'emoji': '📊'}
-
-# ============================================================================
 # ACTIVE RULES DEFINITIONS - With Human-Readable Names
 # ============================================================================
 
@@ -163,203 +110,6 @@ ACTIVE_RULES = [
 ]
 
 # ============================================================================
-# DATABASE FUNCTIONS
-# ============================================================================
-
-def get_rule_performance():
-    """Get actual performance metrics for all active rules"""
-    if supabase is None:
-        return pd.DataFrame()
-    
-    try:
-        # Get all matches with results
-        matches = supabase.table('matches')\
-            .select('*')\
-            .eq('result_entered', True)\
-            .order('match_date', desc=True)\
-            .execute()
-        
-        if not matches.data:
-            return pd.DataFrame()
-        
-        df = pd.DataFrame(matches.data)
-        
-        # Get pattern tracking data for flag-based rules
-        patterns = supabase.table('pattern_tracking')\
-            .select('*')\
-            .execute()
-        
-        pattern_df = pd.DataFrame(patterns.data) if patterns.data else pd.DataFrame()
-        
-        performance_data = []
-        
-        for rule in ACTIVE_RULES:
-            if rule['category'] == 'legacy':
-                # Get performance from rule_hits
-                rule_matches = []
-                for _, match in df.iterrows():
-                    rule_hits = match.get('rule_hits', {})
-                    if isinstance(rule_hits, str):
-                        try:
-                            rule_hits = json.loads(rule_hits)
-                        except:
-                            rule_hits = {}
-                    
-                    # Check if this rule's db_name appears in rule_hits
-                    rule_active = False
-                    for hit_key, hit_value in rule_hits.items():
-                        if isinstance(hit_value, dict) and hit_value.get('name') == rule['db_name']:
-                            rule_active = True
-                            break
-                    
-                    if rule_active:
-                        rule_matches.append(match)
-                
-                if rule_matches:
-                    rule_df = pd.DataFrame(rule_matches)
-                    total = len(rule_df)
-                    
-                    # Calculate hits based on rule outcome
-                    if 'UNDER' in rule['outcome']:
-                        hits = (rule_df['home_goals'] + rule_df['away_goals'] < 3).sum()
-                    elif 'OVER' in rule['outcome']:
-                        hits = (rule_df['home_goals'] + rule_df['away_goals'] >= 3).sum()
-                    elif 'AWAY WIN' in rule['outcome']:
-                        hits = (rule_df['away_goals'] > rule_df['home_goals']).sum()
-                    elif 'HOME WIN' in rule['outcome']:
-                        hits = (rule_df['home_goals'] > rule_df['away_goals']).sum()
-                    elif 'NO DRAW' in rule['outcome']:
-                        hits = (rule_df['home_goals'] != rule_df['away_goals']).sum()
-                    elif 'BTTS' in rule['outcome']:
-                        hits = ((rule_df['home_goals'] > 0) & (rule_df['away_goals'] > 0)).sum()
-                    else:
-                        hits = 0
-                    
-                    hit_rate = round((hits / total) * 100, 1)
-                    
-                    performance_data.append({
-                        'Rule': rule['display_name'],
-                        'Outcome': rule['outcome'],
-                        'Bias': rule['bias'] if rule['bias'] else '-',
-                        'Matches': total,
-                        'Hits': hits,
-                        'Hit Rate': f"{hit_rate}%"
-                    })
-            
-            elif rule['category'] == 'flag' and not pattern_df.empty:
-                # Get performance from pattern_tracking
-                pattern_row = pattern_df[pattern_df['pattern_code'] == rule['pattern_code']]
-                if not pattern_row.empty:
-                    row = pattern_row.iloc[0]
-                    total = row.get('total_matches', 0)
-                    
-                    if total >= 3:
-                        # Calculate hits based on rates
-                        if 'OVER' in rule['outcome']:
-                            hit_rate = row.get('current_over_rate', 0)
-                        elif 'HOME WIN' in rule['outcome']:
-                            hit_rate = row.get('current_home_win_rate', 0)
-                        else:
-                            hit_rate = row.get('confidence_score', 0)
-                        
-                        hits = round(total * hit_rate / 100) if hit_rate else 0
-                        
-                        performance_data.append({
-                            'Rule': rule['display_name'],
-                            'Outcome': rule['outcome'],
-                            'Bias': rule['bias'] if rule['bias'] else '-',
-                            'Matches': total,
-                            'Hits': hits,
-                            'Hit Rate': f"{hit_rate:.1f}%" if hit_rate else '0%'
-                        })
-        
-        return pd.DataFrame(performance_data)
-    
-    except Exception as e:
-        st.error(f"Error getting rule performance: {e}")
-        return pd.DataFrame()
-
-def get_pattern_stats(min_matches=5):
-    """Get patterns from database with confidence scores"""
-    if supabase is None:
-        return pd.DataFrame()
-    
-    try:
-        result = supabase.table('pattern_tracking')\
-            .select('pattern_code,total_matches,current_home_win_rate,current_over_rate,current_btts_rate,confidence_score,home_trend,is_emerging,is_monitored,last_calculated')\
-            .gte('total_matches', min_matches)\
-            .order('confidence_score', desc=True)\
-            .execute()
-        
-        if result.data:
-            df = pd.DataFrame(result.data)
-            # Add human-readable descriptions
-            df['description'] = df['pattern_code'].apply(lambda x: translate_pattern_code(x)['description'])
-            df['prediction'] = df['pattern_code'].apply(lambda x: translate_pattern_code(x)['outcome'])
-            df['emoji'] = df['pattern_code'].apply(lambda x: translate_pattern_code(x)['emoji'])
-            return df
-        return pd.DataFrame()
-    except Exception as e:
-        st.error(f"Error getting pattern stats: {e}")
-        return pd.DataFrame()
-
-def get_pattern_prediction(pattern_code):
-    """Get prediction from database for a specific pattern"""
-    if supabase is None:
-        return None
-    
-    try:
-        result = supabase.table('pattern_tracking')\
-            .select('*')\
-            .eq('pattern_code', pattern_code)\
-            .gte('total_matches', 3)\
-            .execute()
-        
-        if result.data and len(result.data) > 0:
-            return result.data[0]
-        return None
-    except Exception as e:
-        return None
-
-def get_match_by_id(match_id):
-    """Load match data by ID"""
-    if supabase is None:
-        return None
-    
-    try:
-        result = supabase.table('matches')\
-            .select('*')\
-            .eq('id', match_id)\
-            .execute()
-        
-        if result.data and len(result.data) > 0:
-            return result.data[0]
-        return None
-    except Exception as e:
-        st.error(f"Error loading match: {e}")
-        return None
-
-def get_match_by_teams(home_team, away_team, match_date):
-    """Load existing match data from database by team names and date"""
-    if supabase is None:
-        return None
-    
-    try:
-        result = supabase.table('matches')\
-            .select('*')\
-            .eq('home_team', home_team)\
-            .eq('away_team', away_team)\
-            .eq('match_date', match_date.isoformat())\
-            .execute()
-        
-        if result.data and len(result.data) > 0:
-            return result.data[0]
-        return None
-    except Exception as e:
-        st.error(f"Error loading match: {e}")
-        return None
-
-# ============================================================================
 # TIER FUNCTIONS
 # ============================================================================
 
@@ -376,28 +126,12 @@ def calculate_tier(value, category):
         elif value >= 40: return 3
         else: return 4
 
-def tier_to_emoji(tier, category):
-    emojis = {
-        'da': ["💥", "⚡", "📊", "🐢"],
-        'btts': ["🎯", "⚽", "🤔", "🧤"],
-        'over': ["🔥", "📈", "⚖️", "📉"]
-    }
-    return emojis[category][tier-1]
-
-def get_tier_description(tier, category):
-    if category == 'da':
-        return ["Elite Defense", "Strong Defense", "Average Defense", "Weak Defense"][tier-1]
-    elif category == 'btts':
-        return ["Always Scores", "Usually Scores", "50/50", "Rarely Scores"][tier-1]
-    else:
-        return ["Goal Fest", "Goals Likely", "50/50", "Goals Unlikely"][tier-1]
-
 # ============================================================================
-# PREDICTION ENGINE
+# RULE CHECKING FUNCTIONS
 # ============================================================================
 
-def analyze_match(data):
-    """Analyze match and return predictions"""
+def check_rules(data):
+    """Check which rules apply to this match"""
     
     # Calculate tiers
     home_da_tier = calculate_tier(data['home_da'], 'da')
@@ -407,7 +141,7 @@ def analyze_match(data):
     home_over_tier = calculate_tier(data['home_over'], 'over')
     away_over_tier = calculate_tier(data['away_over'], 'over')
     
-    # Calculate flags (these match what's in your database)
+    # Calculate flags
     home_adv_flag = home_da_tier <= 2 and away_da_tier >= 3
     btts_pressure_flag = (home_btts_tier <= 2 and away_btts_tier <= 2)
     overs_pressure_flag = (home_over_tier <= 2 and away_da_tier >= 3) or (away_over_tier <= 2 and home_da_tier >= 3)
@@ -416,46 +150,54 @@ def analyze_match(data):
     # Generate pattern code
     pattern_code = f"{'T' if home_adv_flag else 'F'},{'T' if overs_pressure_flag else 'F'},{'T' if btts_pressure_flag else 'F'},{importance}"
     
-    # Enhanced data for rules
-    enhanced_data = {
-        **data,
-        'home_da_tier': home_da_tier,
-        'away_da_tier': away_da_tier,
-        'home_btts_tier': home_btts_tier,
-        'away_btts_tier': away_btts_tier,
-        'home_over_tier': home_over_tier,
-        'away_over_tier': away_over_tier,
-        'home_adv_flag': home_adv_flag,
-        'btts_pressure_flag': btts_pressure_flag,
-        'overs_pressure_flag': overs_pressure_flag,
-        'importance_score': importance,
-        'pattern_code': pattern_code
-    }
+    # Check each rule
+    active_rules = []
     
-    # Check database for this pattern
-    db_pattern = get_pattern_prediction(pattern_code)
-    matches = []
-    
-    if db_pattern and db_pattern.get('total_matches', 0) >= 3:
-        # Translate the pattern code
-        translation = translate_pattern_code(pattern_code)
+    for rule in ACTIVE_RULES:
+        rule_active = False
         
-        db_match = {
-            'name': translation['display_name'] if 'display_name' in translation else f"{translation['emoji']} {translation['outcome']}",
-            'description': translation['description'],
-            'outcome': translation['outcome'],
-            'emoji': translation['emoji'],
-            'from_db': True,
-            'confidence': db_pattern.get('confidence_score', 70),
-            'matches': db_pattern.get('total_matches', 0),
-            'home_win_rate': db_pattern.get('current_home_win_rate', 50),
-            'over_rate': db_pattern.get('current_over_rate', 50),
-            'btts_rate': db_pattern.get('current_btts_rate', 50)
-        }
-        matches.append(db_match)
+        if rule['category'] == 'flag':
+            # Flag-based rules check pattern code
+            if rule.get('pattern_code') == pattern_code:
+                rule_active = True
+        
+        elif rule['category'] == 'legacy':
+            # Legacy rules check specific conditions
+            if rule['name'] == 'GRAND UNDER 2.5':
+                # Check if both defenses are weak (DA tiers both 4)
+                if home_da_tier == 4 and away_da_tier == 4:
+                    rule_active = True
+            
+            elif rule['name'] == 'Elite + Home Adv':
+                # Check if home has elite defense and home advantage
+                if home_adv_flag and home_da_tier <= 2:
+                    rule_active = True
+            
+            elif rule['name'] == 'home_btts=2 & away_btts=2':
+                # Check if both teams have strong attack (BTTS tiers 1-2)
+                if home_btts_tier <= 2 and away_btts_tier <= 2:
+                    rule_active = True
+            
+            elif rule['name'] == 'Elite + No Home Adv':
+                # Check if away has elite attack and no home advantage
+                if not home_adv_flag and away_da_tier <= 2:
+                    rule_active = True
+            
+            elif rule['name'] == 'Away Win Lock':
+                # Check specific condition for away win lock
+                if home_da_tier == 4 and away_da_tier <= 2:
+                    rule_active = True
+            
+            elif rule['name'] == 'home_da=2 & away_da=3':
+                # Check if home has strong defense, away average
+                if home_da_tier == 2 and away_da_tier == 3:
+                    rule_active = True
+        
+        if rule_active:
+            active_rules.append(rule)
     
     return {
-        'matches': matches,
+        'active_rules': active_rules,
         'home_da_tier': home_da_tier,
         'away_da_tier': away_da_tier,
         'home_btts_tier': home_btts_tier,
@@ -467,7 +209,7 @@ def analyze_match(data):
         'overs_pressure_flag': overs_pressure_flag,
         'importance_score': importance,
         'pattern_code': pattern_code,
-        'has_db_pattern': db_pattern is not None
+        'rule_count': len(active_rules)
     }
 
 # ============================================================================
@@ -479,7 +221,7 @@ def save_match(data, home_goals=None, away_goals=None):
         return None
     
     try:
-        # Calculate tiers and flags first
+        # Calculate tiers and flags
         home_da_tier = calculate_tier(data['home_da'], 'da')
         away_da_tier = calculate_tier(data['away_da'], 'da')
         home_btts_tier = calculate_tier(data['home_btts'], 'btts')
@@ -540,42 +282,6 @@ def save_match(data, home_goals=None, away_goals=None):
         st.error(f"Error saving match: {e}")
         return None
 
-def get_league_stats():
-    if supabase is None:
-        return {}
-    
-    try:
-        result = supabase.table('matches')\
-            .select('league, home_goals, away_goals, actual_goals, actual_btts')\
-            .eq('result_entered', True)\
-            .execute()
-        
-        df = pd.DataFrame(result.data)
-        if df.empty:
-            return {}
-        
-        stats = {}
-        for league in df['league'].unique():
-            league_df = df[df['league'] == league]
-            total_matches = len(league_df)
-            if total_matches == 0:
-                continue
-                
-            total_goals = league_df['actual_goals'].sum()
-            btts_count = league_df['actual_btts'].sum()
-            over_count = (league_df['actual_goals'] >= 3).sum()
-            
-            stats[league] = {
-                'matches': total_matches,
-                'avg_goals': round(total_goals / total_matches, 2),
-                'btts_rate': round((btts_count / total_matches) * 100, 1),
-                'over_rate': round((over_count / total_matches) * 100, 1)
-            }
-        return stats
-    except Exception as e:
-        st.error(f"Error getting league stats: {e}")
-        return {}
-
 def get_recent_matches(limit=20):
     if supabase is None:
         return []
@@ -584,22 +290,6 @@ def get_recent_matches(limit=20):
         result = supabase.table('matches')\
             .select('*')\
             .eq('result_entered', True)\
-            .order('match_date', desc=True)\
-            .limit(limit)\
-            .execute()
-        return result.data
-    except Exception as e:
-        st.error(f"Error getting recent matches: {e}")
-        return []
-
-def get_upcoming_matches(limit=10):
-    if supabase is None:
-        return []
-    
-    try:
-        result = supabase.table('matches')\
-            .select('*')\
-            .eq('result_entered', False)\
             .order('match_date', desc=True)\
             .limit(limit)\
             .execute()
@@ -629,11 +319,9 @@ def main():
         try:
             total = supabase.table('matches').select('*', count='exact').execute()
             completed = supabase.table('matches').select('*', count='exact').eq('result_entered', True).execute()
-            upcoming = supabase.table('matches').select('*', count='exact').eq('result_entered', False).execute()
             
             st.metric("Total Matches", total.count if hasattr(total, 'count') else 0)
             st.metric("Completed", completed.count if hasattr(completed, 'count') else 0)
-            st.metric("Upcoming", upcoming.count if hasattr(upcoming, 'count') else 0)
             
             st.markdown("---")
             st.markdown("**BET KEY**")
@@ -642,60 +330,20 @@ def main():
         except Exception as e:
             st.info("No data yet")
     
-    # Main tabs - SIMPLIFIED to 3
-    tab1, tab2, tab3 = st.tabs([
-        "🏆 ACTIVE RULES",  # Your 9 rules with performance
-        "📝 NEW MATCH",      # Enter matches & get predictions
-        "🔍 PATTERN DISCOVERY" # New patterns emerging
+    # Main tabs
+    tab1, tab2 = st.tabs([
+        "📝 NEW MATCH",      # Enter matches & get predictions from rules
+        "🏆 RULES"           # Your 9 rules
     ])
     
-    # ===== TAB 1: ACTIVE RULES PERFORMANCE =====
+    # ===== TAB 1: NEW MATCH =====
     with tab1:
-        st.header("🏆 Active Rules Performance")
-        st.markdown("### Your 9 Proven Rules - Updated Live")
-        
-        performance_df = get_rule_performance()
-        
-        if not performance_df.empty:
-            # Summary metrics
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Active Rules", len(performance_df))
-            col2.metric("Best Hit Rate", performance_df['Hit Rate'].max())
-            col3.metric("Total Matches Tracked", performance_df['Matches'].sum())
-            
-            # Main performance table
-            st.dataframe(
-                performance_df,
-                hide_index=True,
-                use_container_width=True
-            )
-            
-            # Visual representation
-            fig = px.bar(
-                performance_df,
-                x='Rule',
-                y='Hit Rate',
-                color='Hit Rate',
-                text='Hit Rate',
-                title='Active Rules - Hit Rates',
-                color_continuous_scale='RdYlGn'
-            )
-            fig.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig, use_container_width=True)
-            
-        else:
-            st.info("No performance data available yet. Add matches to see rule performance.")
-    
-    # ===== TAB 2: NEW MATCH =====
-    with tab2:
-        st.subheader("Enter New Match Data")
+        st.subheader("Enter Match Data - Rules Will Auto-Detect")
         
         if 'pending_match' not in st.session_state:
             st.session_state.pending_match = None
-        if 'analysis_result' not in st.session_state:
-            st.session_state.analysis_result = None
-        if 'loaded_match' not in st.session_state:
-            st.session_state.loaded_match = None
+        if 'rule_results' not in st.session_state:
+            st.session_state.rule_results = None
         
         with st.form("match_form"):
             col1, col2 = st.columns(2)
@@ -703,117 +351,35 @@ def main():
             with col1:
                 st.markdown("**🏠 HOME**")
                 home_team = st.text_input("Team", key="home_team_input")
-                home_da = st.number_input("DA", 0, 100, 50, key="home_da_input")
-                home_btts = st.number_input("BTTS %", 0, 100, 50, key="home_btts_input")
+                home_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 50, key="home_da_input")
+                home_btts = st.number_input("BTTS % (Both Teams to Score)", 0, 100, 50, key="home_btts_input")
                 home_over = st.number_input("Over %", 0, 100, 50, key="home_over_input")
             
             with col2:
                 st.markdown("**✈️ AWAY**")
                 away_team = st.text_input("Team", key="away_team_input")
-                away_da = st.number_input("DA", 0, 100, 50, key="away_da_input")
-                away_btts = st.number_input("BTTS %", 0, 100, 50, key="away_btts_input")
+                away_da = st.number_input("DA (Dangerous Attacks)", 0, 100, 50, key="away_da_input")
+                away_btts = st.number_input("BTTS % (Both Teams to Score)", 0, 100, 50, key="away_btts_input")
                 away_over = st.number_input("Over %", 0, 100, 50, key="away_over_input")
             
             col3, col4, col5 = st.columns(3)
             with col3:
-                elite = st.checkbox("⭐ Elite", key="elite_input")
+                elite = st.checkbox("⭐ Elite Match", key="elite_input")
             with col4:
                 derby = st.checkbox("🏆 Derby", key="derby_input")
             with col5:
-                relegation = st.checkbox("⚠️ Relegation", key="relegation_input")
+                relegation = st.checkbox("⚠️ Relegation Battle", key="relegation_input")
             
-            league_options = ["EPL", "BUNDESLIGA", "SERIE A", "LA LIGA", "LIGUE 1", "CHAMPIONSHIP", "OTHER LEAGUE"]
-            league = st.selectbox("League", league_options, key="league_input")
+            league = st.text_input("League", "EPL", key="league_input")
+            notes = st.text_input("Notes (optional)", key="notes_input")
             
-            if league == "OTHER LEAGUE":
-                custom_league = st.text_input("Enter League Name", key="custom_league_input")
-                if custom_league:
-                    league = custom_league.upper()
-            
-            notes = st.text_input("Notes", key="notes_input")
-            
-            # Add a button to check if match exists
-            check_match = st.form_submit_button("🔍 CHECK DATABASE", use_container_width=True)
+            analyzed = st.form_submit_button("🔍 CHECK RULES", use_container_width=True, type="primary")
         
-        # Handle check match button
-        if check_match and home_team and away_team:
-            existing = get_match_by_teams(home_team, away_team, datetime.now().date())
-            if existing:
-                st.session_state.loaded_match = existing
-                st.success(f"✅ Match found in database! Loaded data for you.")
-                st.rerun()
-            else:
-                st.info("No existing match found. This is a new entry.")
-        
-        # If we loaded a match, pre-fill the form with database values
-        if st.session_state.loaded_match:
-            match = st.session_state.loaded_match
-            
-            # Display the loaded match data
-            st.markdown("---")
-            st.subheader("📋 Loaded Match Data")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown(f"**Home Team:** {match['home_team']}")
-                st.markdown(f"**Home DA:** {match['home_da']}")
-                st.markdown(f"**Home BTTS:** {match['home_btts']}%")
-                st.markdown(f"**Home Over:** {match['home_over']}%")
-            
-            with col2:
-                st.markdown(f"**Away Team:** {match['away_team']}")
-                st.markdown(f"**Away DA:** {match['away_da']}")
-                st.markdown(f"**Away BTTS:** {match['away_btts']}%")
-                st.markdown(f"**Away Over:** {match['away_over']}%")
-            
-            # Show pressure flags and importance from database
-            st.markdown("---")
-            st.subheader("🏁 DATABASE FIELDS")
-            
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                btts_flag = match.get('btts_pressure_flag', False)
-                st.markdown(f"**BTTS Pressure Flag:** {'✅ Active' if btts_flag else '❌ Inactive'}")
-            
-            with col_b:
-                overs_flag = match.get('overs_pressure_flag', False)
-                st.markdown(f"**Overs Pressure Flag:** {'✅ Active' if overs_flag else '❌ Inactive'}")
-            
-            with col_c:
-                importance = match.get('importance_score', 0)
-                importance_text = ["Regular Match", "Important Match", "Very Important"][importance]
-                st.markdown(f"**Importance Score:** {importance} - {importance_text}")
-            
-            # Show rule hits
-            st.markdown("---")
-            st.subheader("📋 ACTIVE RULES")
-            
-            rule_hits = match.get('rule_hits', {})
-            if isinstance(rule_hits, str):
-                try:
-                    rule_hits = json.loads(rule_hits)
-                except:
-                    rule_hits = {}
-            
-            if rule_hits:
-                for rule_id, rule_data in rule_hits.items():
-                    if isinstance(rule_data, dict) and rule_data.get('hit'):
-                        st.markdown(f"✅ **{rule_data.get('name', rule_id)}**")
-            else:
-                st.markdown("No rules activated for this match")
-            
-            # Clear button
-            if st.button("Clear Loaded Match"):
-                st.session_state.loaded_match = None
-                st.rerun()
-        
-        # Regular analyze button (outside the form)
-        if st.button("🔍 ANALYZE", use_container_width=True, type="primary"):
+        if analyzed:
             if not home_team or not away_team:
                 st.error("Please enter both team names")
             else:
-                st.session_state.pending_match = {
+                match_data = {
                     'home_team': home_team, 
                     'away_team': away_team, 
                     'league': league,
@@ -829,47 +395,50 @@ def main():
                     'notes': notes
                 }
                 
-                st.session_state.analysis_result = analyze_match(st.session_state.pending_match)
+                st.session_state.rule_results = check_rules(match_data)
+                st.session_state.pending_match = match_data
                 st.rerun()
         
-        # Show prediction results
-        if st.session_state.analysis_result and st.session_state.pending_match:
+        # Show rule check results
+        if st.session_state.rule_results and st.session_state.pending_match:
             data = st.session_state.pending_match
-            analysis = st.session_state.analysis_result
+            rules = st.session_state.rule_results
             
             st.markdown("---")
-            st.subheader("🎯 PREDICTION")
             
-            # Show the calculated flags and importance
+            # Show calculated metrics
             col_a, col_b, col_c = st.columns(3)
             with col_a:
-                st.markdown(f"**BTTS Pressure Flag:** {'✅ Active' if analysis['btts_pressure_flag'] else '❌ Inactive'}")
+                st.metric("BTTS Pressure", "✅ ACTIVE" if rules['btts_pressure_flag'] else "❌ INACTIVE")
             with col_b:
-                st.markdown(f"**Overs Pressure Flag:** {'✅ Active' if analysis['overs_pressure_flag'] else '❌ Inactive'}")
+                st.metric("Overs Pressure", "✅ ACTIVE" if rules['overs_pressure_flag'] else "❌ INACTIVE")
             with col_c:
-                importance_text = ["Regular Match", "Important Match", "Very Important"][analysis['importance_score']]
-                st.markdown(f"**Importance Score:** {analysis['importance_score']} - {importance_text}")
+                imp_text = ["Regular", "Important", "Very Important"][rules['importance_score']]
+                st.metric("Importance", f"{rules['importance_score']} - {imp_text}")
             
-            st.markdown(f"**Pattern Code:** `{analysis['pattern_code']}`")
+            st.markdown(f"**Pattern Code:** `{rules['pattern_code']}`")
+            st.markdown(f"**Active Rules:** {rules['rule_count']} of 9")
             
-            if analysis['matches']:
-                for match in analysis['matches']:
-                    # Create a nice prediction box
+            # Show active rules
+            if rules['active_rules']:
+                st.markdown("---")
+                st.subheader("✅ ACTIVE RULES FOUND")
+                
+                for rule in rules['active_rules']:
                     with st.container():
                         st.markdown(f"""
-                        <div style="background-color: #1e3a5f; padding: 20px; border-radius: 10px; margin-bottom: 15px; border-left: 5px solid #4CAF50;">
-                            <h3 style="margin:0; color: white;">{match['emoji']} {match['name']}</h3>
-                            <p style="margin:10px 0 5px 0; color: #ddd; font-size: 16px;">{match.get('description', '')}</p>
-                            <p style="margin:5px 0; color: white; font-size: 20px; font-weight: bold;">🎯 {match['outcome']}</p>
-                            <p style="margin:10px 0 0 0; color: #aaa;">Confidence: {match['confidence']:.1f}% based on {match['matches']} matches</p>
+                        <div style="background-color: #1e3a5f; padding: 15px; border-radius: 8px; margin-bottom: 10px; border-left: 5px solid #4CAF50;">
+                            <h4 style="margin:0; color: white;">{rule['display_name']}</h4>
+                            <p style="margin:5px 0; color: #ddd;">🎯 {rule['outcome']}</p>
+                            <p style="margin:5px 0; color: #aaa; font-size: 14px;">{rule['bias'] if rule['bias'] else ''}</p>
                         </div>
                         """, unsafe_allow_html=True)
             else:
-                st.warning("No matching patterns found for this match")
+                st.warning("No rules activated for this match")
             
             # Enter result
             st.markdown("---")
-            st.subheader("📥 Enter Result")
+            st.subheader("📥 Enter Final Score")
             
             with st.form("result_form"):
                 col_r1, col_r2 = st.columns(2)
@@ -886,7 +455,7 @@ def main():
                         key="away_goals_result"
                     )
                 
-                saved = st.form_submit_button("💾 SAVE MATCH", type="primary", use_container_width=True)
+                saved = st.form_submit_button("💾 SAVE TO DATABASE", type="primary", use_container_width=True)
                 
                 if saved:
                     match_id = save_match(data, home_goals, away_goals)
@@ -894,38 +463,41 @@ def main():
                         st.success(f"✅ Match #{match_id} saved!")
                         st.balloons()
                         st.session_state.pending_match = None
-                        st.session_state.analysis_result = None
+                        st.session_state.rule_results = None
                         st.rerun()
     
-    # ===== TAB 3: PATTERN DISCOVERY =====
-    with tab3:
-        st.header("🔍 Pattern Discovery")
-        st.markdown("### New Patterns Emerging from Data")
+    # ===== TAB 2: RULES =====
+    with tab2:
+        st.header("🏆 The 9 Active Rules")
+        st.markdown("### These rules automatically detect patterns in your data")
         
-        min_matches = st.slider("Minimum Matches", 5, 20, 8, key="pattern_min_matches")
+        # Display all rules in a grid
+        for i in range(0, len(ACTIVE_RULES), 3):
+            cols = st.columns(3)
+            for j in range(3):
+                if i + j < len(ACTIVE_RULES):
+                    rule = ACTIVE_RULES[i + j]
+                    with cols[j]:
+                        st.markdown(f"""
+                        <div style="background-color: #2d2d2d; padding: 15px; border-radius: 8px; height: 200px; margin-bottom: 10px;">
+                            <h4 style="margin:0; color: #4CAF50;">{rule['display_name']}</h4>
+                            <p style="margin:10px 0; color: white;"><strong>🎯 {rule['outcome']}</strong></p>
+                            <p style="margin:10px 0; color: #aaa; font-size: 14px;">{rule['bias'] if rule['bias'] else 'Auto-detects from inputs'}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
         
-        patterns = get_pattern_stats(min_matches)
+        # Show recent matches to demonstrate rules in action
+        st.markdown("---")
+        st.subheader("📊 Recent Matches")
         
-        if not patterns.empty:
-            st.metric("Emerging Patterns Found", len(patterns))
-            
-            # Show patterns with human-readable descriptions
-            display_df = patterns[['emoji', 'prediction', 'description', 'total_matches', 
-                                  'current_home_win_rate', 'current_over_rate', 'current_btts_rate', 
-                                  'confidence_score', 'home_trend']].copy()
-            
-            display_df.columns = ['', 'Prediction', 'Pattern Details', 'Matches', 
-                                 'Home Win %', 'Over %', 'BTTS %', 'Confidence', 'Trend']
-            
+        recent = get_recent_matches(10)
+        if recent:
+            df = pd.DataFrame(recent)
+            display_df = df[['match_date', 'home_team', 'away_team', 'home_goals', 'away_goals', 'pattern_code']].copy()
+            display_df.columns = ['Date', 'Home', 'Away', 'H', 'A', 'Pattern']
             st.dataframe(display_df, hide_index=True, use_container_width=True)
-            
-            fig = px.scatter(patterns, x='total_matches', y='confidence_score',
-                           size='confidence_score', color='home_trend',
-                           hover_data=['prediction'],
-                           title='Emerging Patterns - Confidence vs Sample Size')
-            st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info(f"No patterns found with {min_matches}+ matches. Keep adding data!")
+            st.info("No recent matches found")
 
 if __name__ == "__main__":
     main()
