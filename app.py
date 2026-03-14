@@ -31,10 +31,25 @@ else:
 
 def translate_pattern_code(pattern_code):
     """Convert pattern code like 'F,T,F,0' to human-readable description"""
+    if not pattern_code or not isinstance(pattern_code, str):
+        return {
+            'code': 'Unknown',
+            'name': 'Unknown Pattern',
+            'description': 'No pattern data available',
+            'outcome': 'Unknown',
+            'flags': 'No flags'
+        }
+    
     try:
         parts = pattern_code.split(',')
         if len(parts) != 4:
-            return pattern_code
+            return {
+                'code': pattern_code,
+                'name': pattern_code,
+                'description': pattern_code,
+                'outcome': 'Unknown',
+                'flags': pattern_code
+            }
         
         home = "🏠 Home Advantage" if parts[0] == 'T' else "✈️ No Home Advantage"
         btts = "⚽ BTTS Pressure" if parts[2] == 'T' else "🧤 No BTTS Pressure"
@@ -105,13 +120,13 @@ def translate_pattern_code(pattern_code):
             'outcome': pattern_info['outcome'],
             'flags': f"{home} • {btts} • {overs} • {importance}"
         }
-    except:
+    except Exception as e:
         return {
             'code': pattern_code, 
-            'name': pattern_code, 
-            'description': pattern_code, 
+            'name': str(pattern_code), 
+            'description': f"Error parsing pattern: {e}", 
             'outcome': 'Unknown',
-            'flags': pattern_code
+            'flags': str(pattern_code)
         }
 
 # ============================================================================
@@ -131,14 +146,24 @@ def get_gold_patterns():
             .order('confidence_tier', desc=True)\
             .execute()
         
-        if result.data:
+        if result.data and len(result.data) > 0:
             df = pd.DataFrame(result.data)
+            # Fill NaN values with defaults
+            df = df.fillna({
+                'discovery_home_win_rate': 0,
+                'discovery_over_rate': 0,
+                'discovery_btts_rate': 0,
+                'discovery_sample_size': 0,
+                'confidence_tier': 'LOW',
+                'pattern_name': '',
+                'promotion_date': ''
+            })
             # Add human-readable descriptions
             df['display_name'] = df['pattern_code'].apply(
-                lambda x: translate_pattern_code(x)['name']
+                lambda x: translate_pattern_code(x)['name'] if pd.notna(x) else 'Unknown'
             )
             df['outcome'] = df['pattern_code'].apply(
-                lambda x: translate_pattern_code(x)['outcome']
+                lambda x: translate_pattern_code(x)['outcome'] if pd.notna(x) else 'Unknown'
             )
             return df
         return pd.DataFrame()
@@ -149,7 +174,7 @@ def get_gold_patterns():
 @st.cache_data(ttl=60)  # Cache for 1 minute
 def get_pattern_prediction(pattern_code):
     """Get prediction from pattern_tracking for a specific pattern"""
-    if supabase is None:
+    if supabase is None or not pattern_code:
         return None
     
     try:
@@ -216,13 +241,21 @@ def get_emerging_patterns(min_confidence=30):
             .order('confidence_score', desc=True)\
             .execute()
         
-        if result.data:
+        if result.data and len(result.data) > 0:
             df = pd.DataFrame(result.data)
+            # Fill NaN values with defaults
+            df = df.fillna({
+                'current_home_win_rate': 0,
+                'current_over_rate': 0,
+                'current_btts_rate': 0,
+                'total_matches': 0,
+                'confidence_score': 0
+            })
             df['display_name'] = df['pattern_code'].apply(
-                lambda x: translate_pattern_code(x)['name']
+                lambda x: translate_pattern_code(x)['name'] if pd.notna(x) else 'Unknown'
             )
             df['outcome'] = df['pattern_code'].apply(
-                lambda x: translate_pattern_code(x)['outcome']
+                lambda x: translate_pattern_code(x)['outcome'] if pd.notna(x) else 'Unknown'
             )
             return df
         return pd.DataFrame()
@@ -241,7 +274,7 @@ def get_recent_matches(limit=20):
             .order('match_date', desc=True)\
             .limit(limit)\
             .execute()
-        return result.data
+        return result.data if result.data else []
     except Exception as e:
         return []
 
@@ -251,16 +284,19 @@ def get_recent_matches(limit=20):
 
 def get_prediction_from_db(pattern_code):
     """Get prediction stats from pattern_tracking"""
+    if not pattern_code:
+        return None
+        
     pattern_stats = get_pattern_prediction(pattern_code)
     
     if pattern_stats:
         return {
-            'confidence': pattern_stats.get('confidence_score', 50),
-            'matches': pattern_stats.get('total_matches', 0),
-            'home_win_rate': pattern_stats.get('current_home_win_rate', 50),
-            'over_rate': pattern_stats.get('current_over_rate', 50),
-            'btts_rate': pattern_stats.get('current_btts_rate', 50),
-            'is_emerging': pattern_stats.get('is_emerging', False)
+            'confidence': float(pattern_stats.get('confidence_score') or 50),
+            'matches': int(pattern_stats.get('total_matches') or 0),
+            'home_win_rate': float(pattern_stats.get('current_home_win_rate') or 50),
+            'over_rate': float(pattern_stats.get('current_over_rate') or 50),
+            'btts_rate': float(pattern_stats.get('current_btts_rate') or 50),
+            'is_emerging': bool(pattern_stats.get('is_emerging') or False)
         }
     return None
 
@@ -471,6 +507,7 @@ def main():
                     'match_data': match_data,
                     'prediction': prediction
                 }
+                st.rerun()
         
         # Display prediction if available
         if st.session_state.match_analyzed:
@@ -483,40 +520,41 @@ def main():
             col_pred1, col_pred2 = st.columns([2, 1])
             
             with col_pred1:
-                confidence_color = "green" if pred['confidence'] >= 70 else "orange" if pred['confidence'] >= 50 else "red"
+                confidence = float(pred.get('confidence', 50))
+                confidence_color = "green" if confidence >= 70 else "orange" if confidence >= 50 else "red"
                 
                 st.markdown(f"""
                 <div style="background-color: #1e3a5f; padding: 25px; border-radius: 10px; border-left: 5px solid #4CAF50;">
-                    <h2 style="color: white; margin: 0;">{pred['pattern_name']}</h2>
-                    <p style="color: #ddd; font-size: 18px; margin: 10px 0;">{pred['pattern_description']}</p>
-                    <p style="color: #ffd700; font-size: 24px; font-weight: bold; margin: 10px 0;">🎯 {pred['predicted_outcome']}</p>
-                    <p style="color: #ddd; font-size: 14px;">{pred['flags']}</p>
+                    <h2 style="color: white; margin: 0;">{pred.get('pattern_name', 'Unknown Pattern')}</h2>
+                    <p style="color: #ddd; font-size: 18px; margin: 10px 0;">{pred.get('pattern_description', '')}</p>
+                    <p style="color: #ffd700; font-size: 24px; font-weight: bold; margin: 10px 0;">🎯 {pred.get('predicted_outcome', 'Unknown')}</p>
+                    <p style="color: #ddd; font-size: 14px;">{pred.get('flags', '')}</p>
                     <div style="background-color: #2a4a7a; padding: 15px; border-radius: 5px; margin: 15px 0;">
                         <h3 style="color: white; margin: 0 0 10px 0;">📊 Pattern History</h3>
                         <div style="display: flex; gap: 20px;">
-                            <div><span style="color: #ddd;">Confidence:</span> <span style="color: {confidence_color}; font-weight: bold; font-size: 20px;">{pred['confidence']:.1f}%</span></div>
-                            <div><span style="color: #ddd;">Sample:</span> <span style="color: white; font-weight: bold;">{pred['sample_size']} matches</span></div>
+                            <div><span style="color: #ddd;">Confidence:</span> <span style="color: {confidence_color}; font-weight: bold; font-size: 20px;">{confidence:.1f}%</span></div>
+                            <div><span style="color: #ddd;">Sample:</span> <span style="color: white; font-weight: bold;">{pred.get('sample_size', 0)} matches</span></div>
                         </div>
                         <div style="display: flex; gap: 20px; margin-top: 10px;">
-                            <div><span style="color: #ddd;">🏠 Home Win:</span> <span style="color: white;">{pred['historical_home_win']:.1f}%</span></div>
-                            <div><span style="color: #ddd;">🔥 Over 2.5:</span> <span style="color: white;">{pred['historical_over']:.1f}%</span></div>
-                            <div><span style="color: #ddd;">⚽ BTTS:</span> <span style="color: white;">{pred['historical_btts']:.1f}%</span></div>
+                            <div><span style="color: #ddd;">🏠 Home Win:</span> <span style="color: white;">{pred.get('historical_home_win', 50):.1f}%</span></div>
+                            <div><span style="color: #ddd;">🔥 Over 2.5:</span> <span style="color: white;">{pred.get('historical_over', 50):.1f}%</span></div>
+                            <div><span style="color: #ddd;">⚽ BTTS:</span> <span style="color: white;">{pred.get('historical_btts', 50):.1f}%</span></div>
                         </div>
                     </div>
-                    <p style="color: #aaa; font-size: 12px; margin: 10px 0 0 0;">Pattern Code: {pred['pattern_code']}</p>
+                    <p style="color: #aaa; font-size: 12px; margin: 10px 0 0 0;">Pattern Code: {pred.get('pattern_code', '')}</p>
                 </div>
                 """, unsafe_allow_html=True)
             
             with col_pred2:
                 st.markdown("**📋 Match Context**")
                 context_data = {
-                    "League": match_data['league'],
-                    "Home DA Tier": "T1" if match_data['home_da'] >= 75 else "T2" if match_data['home_da'] >= 60 else "T3" if match_data['home_da'] >= 40 else "T4",
-                    "Away DA Tier": "T1" if match_data['away_da'] >= 75 else "T2" if match_data['away_da'] >= 60 else "T3" if match_data['away_da'] >= 40 else "T4",
-                    "Importance": ["Low", "Medium", "High"][min(match_data['importance_score'], 2)],
-                    "Home Advantage": "✅" if match_data['home_adv_flag'] else "❌",
-                    "BTTS Pressure": "✅" if match_data['btts_pressure_flag'] else "❌",
-                    "Overs Pressure": "✅" if match_data['overs_pressure_flag'] else "❌"
+                    "League": match_data.get('league', 'Unknown'),
+                    "Home DA Tier": "T1" if match_data.get('home_da', 50) >= 75 else "T2" if match_data.get('home_da', 50) >= 60 else "T3" if match_data.get('home_da', 50) >= 40 else "T4",
+                    "Away DA Tier": "T1" if match_data.get('away_da', 50) >= 75 else "T2" if match_data.get('away_da', 50) >= 60 else "T3" if match_data.get('away_da', 50) >= 40 else "T4",
+                    "Importance": ["Low", "Medium", "High"][min(match_data.get('importance_score', 0), 2)],
+                    "Home Advantage": "✅" if match_data.get('home_adv_flag', False) else "❌",
+                    "BTTS Pressure": "✅" if match_data.get('btts_pressure_flag', False) else "❌",
+                    "Overs Pressure": "✅" if match_data.get('overs_pressure_flag', False) else "❌"
                 }
                 
                 for key, value in context_data.items():
@@ -529,10 +567,10 @@ def main():
             col_res1, col_res2, col_res3 = st.columns([1, 1, 2])
             
             with col_res1:
-                home_goals = st.number_input(f"{match_data['home_team']} Goals", 0, 20, 0, key="home_goals_result")
+                home_goals = st.number_input(f"{match_data.get('home_team', 'Home')} Goals", 0, 20, 0, key="home_goals_result")
             
             with col_res2:
-                away_goals = st.number_input(f"{match_data['away_team']} Goals", 0, 20, 0, key="away_goals_result")
+                away_goals = st.number_input(f"{match_data.get('away_team', 'Away')} Goals", 0, 20, 0, key="away_goals_result")
             
             with col_res3:
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -540,7 +578,7 @@ def main():
                     saved_match = save_match(match_data, home_goals, away_goals)
                     
                     if saved_match:
-                        st.success(f"✅ Match #{saved_match['id']} saved! Pattern tracking updated automatically.")
+                        st.success(f"✅ Match #{saved_match.get('id', 'Unknown')} saved! Pattern tracking updated automatically.")
                         st.balloons()
                         
                         # Clear cache to refresh data
@@ -558,34 +596,51 @@ def main():
             # Summary metrics
             col_g1, col_g2, col_g3 = st.columns(3)
             col_g1.metric("Total Gold Patterns", len(gold_patterns))
-            col_g2.metric("HIGH Confidence", len(gold_patterns[gold_patterns['confidence_tier'] == 'HIGH']))
-            col_g3.metric("PLATINUM Tier", len(gold_patterns[gold_patterns['confidence_tier'].isin(['PLATINUM', 'HIGH'])]))
+            
+            high_count = len(gold_patterns[gold_patterns['confidence_tier'] == 'HIGH']) if 'confidence_tier' in gold_patterns.columns else 0
+            platinum_count = len(gold_patterns[gold_patterns['confidence_tier'].isin(['PLATINUM', 'HIGH'])]) if 'confidence_tier' in gold_patterns.columns else 0
+            
+            col_g2.metric("HIGH Confidence", high_count)
+            col_g3.metric("PLATINUM Tier", platinum_count)
             
             # Display gold patterns
-            for _, pattern in gold_patterns.iterrows():
+            for idx, pattern in gold_patterns.iterrows():
                 with st.container():
                     tier_color = {
                         'PLATINUM': '#e5e4e2',
                         'HIGH': '#ffd700',
                         'MEDIUM': '#c0c0c0',
                         'LOW': '#cd7f32'
-                    }.get(pattern.get('confidence_tier', 'LOW'), '#ffffff')
+                    }.get(pattern.get('confidence_tier'), '#ffffff')
+                    
+                    # Safely get values with defaults
+                    display_name = pattern.get('display_name', pattern.get('pattern_code', 'Unknown'))
+                    confidence_tier = pattern.get('confidence_tier', 'NEW')
+                    outcome = pattern.get('outcome', 'Unknown')
+                    pattern_name = pattern.get('pattern_name', '')
+                    sample_size = pattern.get('discovery_sample_size', 0) or 0
+                    home_win = float(pattern.get('discovery_home_win_rate', 0) or 0)
+                    over_rate = float(pattern.get('discovery_over_rate', 0) or 0)
+                    btts_rate = float(pattern.get('discovery_btts_rate', 0) or 0)
+                    promo_date = pattern.get('promotion_date', '')
+                    if promo_date and len(str(promo_date)) > 10:
+                        promo_date = str(promo_date)[:10]
                     
                     st.markdown(f"""
                     <div style="background-color: #1e3a5f; padding: 20px; border-radius: 10px; margin-bottom: 15px; border-left: 5px solid {tier_color};">
                         <div style="display: flex; justify-content: space-between;">
-                            <h3 style="color: white; margin: 0;">{pattern.get('display_name', pattern['pattern_code'])}</h3>
-                            <span style="background-color: {tier_color}; color: black; padding: 5px 10px; border-radius: 5px; font-weight: bold;">{pattern.get('confidence_tier', 'NEW')}</span>
+                            <h3 style="color: white; margin: 0;">{display_name}</h3>
+                            <span style="background-color: {tier_color}; color: black; padding: 5px 10px; border-radius: 5px; font-weight: bold;">{confidence_tier}</span>
                         </div>
-                        <p style="color: #ffd700; font-size: 18px; margin: 10px 0;">🎯 {pattern.get('outcome', 'Unknown')}</p>
-                        <p style="color: #ddd;">{pattern.get('pattern_name', '')}</p>
+                        <p style="color: #ffd700; font-size: 18px; margin: 10px 0;">🎯 {outcome}</p>
+                        <p style="color: #ddd;">{pattern_name}</p>
                         <div style="display: flex; gap: 20px; margin-top: 10px;">
-                            <div><span style="color: #aaa;">Matches:</span> <span style="color: white;">{pattern.get('discovery_sample_size', 0)}</span></div>
-                            <div><span style="color: #aaa;">Home Win:</span> <span style="color: white;">{pattern.get('discovery_home_win_rate', 0):.1f}%</span></div>
-                            <div><span style="color: #aaa;">Over 2.5:</span> <span style="color: white;">{pattern.get('discovery_over_rate', 0):.1f}%</span></div>
-                            <div><span style="color: #aaa;">BTTS:</span> <span style="color: white;">{pattern.get('discovery_btts_rate', 0):.1f}%</span></div>
+                            <div><span style="color: #aaa;">Matches:</span> <span style="color: white;">{sample_size}</span></div>
+                            <div><span style="color: #aaa;">Home Win:</span> <span style="color: white;">{home_win:.1f}%</span></div>
+                            <div><span style="color: #aaa;">Over 2.5:</span> <span style="color: white;">{over_rate:.1f}%</span></div>
+                            <div><span style="color: #aaa;">BTTS:</span> <span style="color: white;">{btts_rate:.1f}%</span></div>
                         </div>
-                        <p style="color: #aaa; font-size: 12px; margin-top: 10px;">Code: {pattern['pattern_code']} | Promoted: {pattern.get('promotion_date', 'Unknown')[:10]}</p>
+                        <p style="color: #aaa; font-size: 12px; margin-top: 10px;">Code: {pattern.get('pattern_code', '')} | Promoted: {promo_date}</p>
                     </div>
                     """, unsafe_allow_html=True)
         else:
@@ -599,36 +654,45 @@ def main():
         emerging = get_emerging_patterns(min_confidence)
         
         if not emerging.empty:
-            for _, pattern in emerging.iterrows():
+            for idx, pattern in emerging.iterrows():
                 with st.container():
-                    confidence = pattern.get('confidence_score', 0)
+                    confidence = float(pattern.get('confidence_score', 0) or 0)
                     conf_color = "green" if confidence >= 70 else "orange" if confidence >= 50 else "red"
+                    
+                    # Safely get values with defaults
+                    display_name = pattern.get('display_name', pattern.get('pattern_code', 'Unknown'))
+                    outcome = pattern.get('outcome', 'Tracking')
+                    total_matches = pattern.get('total_matches', 0) or 0
+                    home_win = float(pattern.get('current_home_win_rate', 0) or 0)
+                    over_rate = float(pattern.get('current_over_rate', 0) or 0)
+                    btts_rate = float(pattern.get('current_btts_rate', 0) or 0)
                     
                     st.markdown(f"""
                     <div style="background-color: #2a2a4a; padding: 20px; border-radius: 10px; margin-bottom: 15px; border-left: 5px solid #ffd700;">
-                        <h3 style="color: white; margin: 0;">{pattern.get('display_name', pattern['pattern_code'])}</h3>
-                        <p style="color: #ffd700; font-size: 16px;">🎯 {pattern.get('outcome', 'Tracking')}</p>
+                        <h3 style="color: white; margin: 0;">{display_name}</h3>
+                        <p style="color: #ffd700; font-size: 16px;">🎯 {outcome}</p>
                         <div style="display: flex; gap: 30px; margin: 15px 0;">
                             <div><span style="color: #aaa;">Confidence:</span> <span style="color: {conf_color}; font-weight: bold;">{confidence:.1f}%</span></div>
-                            <div><span style="color: #aaa;">Matches:</span> <span style="color: white;">{pattern.get('total_matches', 0)}</span></div>
-                            <div><span style="color: #aaa;">Home Win:</span> <span style="color: white;">{pattern.get('current_home_win_rate', 0):.1f}%</span></div>
-                            <div><span style="color: #aaa;">Over 2.5:</span> <span style="color: white;">{pattern.get('current_over_rate', 0):.1f}%</span></div>
-                            <div><span style="color: #aaa;">BTTS:</span> <span style="color: white;">{pattern.get('current_btts_rate', 0):.1f}%</span></div>
+                            <div><span style="color: #aaa;">Matches:</span> <span style="color: white;">{total_matches}</span></div>
+                            <div><span style="color: #aaa;">Home Win:</span> <span style="color: white;">{home_win:.1f}%</span></div>
+                            <div><span style="color: #aaa;">Over 2.5:</span> <span style="color: white;">{over_rate:.1f}%</span></div>
+                            <div><span style="color: #aaa;">BTTS:</span> <span style="color: white;">{btts_rate:.1f}%</span></div>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
             
             # Chart
-            fig = px.scatter(
-                emerging, 
-                x='total_matches', 
-                y='confidence_score',
-                size='confidence_score',
-                color='current_home_win_rate',
-                hover_data=['pattern_code', 'current_over_rate', 'current_btts_rate'],
-                title='Emerging Patterns - Confidence vs Sample Size'
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            if len(emerging) > 0:
+                fig = px.scatter(
+                    emerging, 
+                    x='total_matches', 
+                    y='confidence_score',
+                    size='confidence_score',
+                    color='current_home_win_rate',
+                    hover_data=['pattern_code', 'current_over_rate', 'current_btts_rate'],
+                    title='Emerging Patterns - Confidence vs Sample Size'
+                )
+                st.plotly_chart(fig, use_container_width=True)
         else:
             st.info(f"No emerging patterns with confidence >= {min_confidence}%")
     
@@ -644,38 +708,42 @@ def main():
             # Summary stats
             col_r1, col_r2, col_r3, col_r4 = st.columns(4)
             col_r1.metric("Matches", len(df))
-            col_r2.metric("Avg Goals", f"{df['actual_goals'].mean():.2f}")
-            col_r3.metric("BTTS Rate", f"{df['actual_btts'].mean() * 100:.1f}%")
-            col_r4.metric("Over 2.5 Rate", f"{(df['actual_goals'] >= 3).mean() * 100:.1f}%")
+            col_r2.metric("Avg Goals", f"{df['actual_goals'].mean():.2f}" if 'actual_goals' in df.columns else "0")
+            col_r3.metric("BTTS Rate", f"{df['actual_btts'].mean() * 100:.1f}%" if 'actual_btts' in df.columns else "0%")
+            col_r4.metric("Over 2.5 Rate", f"{(df['actual_goals'] >= 3).mean() * 100:.1f}%" if 'actual_goals' in df.columns else "0%")
             
             # Display recent matches
-            display_df = df[['match_date', 'home_team', 'away_team', 'home_goals', 'away_goals', 
-                           'actual_goals', 'actual_btts', 'pattern_code']].copy()
-            
-            display_df['result'] = display_df.apply(
-                lambda x: f"{int(x['home_goals'])}-{int(x['away_goals'])}", axis=1
-            )
-            display_df['btts'] = display_df['actual_btts'].apply(lambda x: "✅" if x else "❌")
-            
-            st.dataframe(
-                display_df[['match_date', 'home_team', 'away_team', 'result', 'actual_goals', 'btts', 'pattern_code']],
-                hide_index=True,
-                use_container_width=True
-            )
-            
-            # Pattern performance chart
-            pattern_perf = df.groupby('pattern_code').agg({
-                'id': 'count',
-                'actual_btts': 'mean',
-                'actual_goals': lambda x: (x >= 3).mean()
-            }).round(3) * 100
-            
-            pattern_perf.columns = ['Matches', 'BTTS %', 'Over %']
-            pattern_perf = pattern_perf[pattern_perf['Matches'] >= 3].sort_values('BTTS %', ascending=False).head(10)
-            
-            if not pattern_perf.empty:
-                st.subheader("🔥 Hot Patterns (Last 50 Matches)")
-                st.dataframe(pattern_perf, use_container_width=True)
+            if all(col in df.columns for col in ['match_date', 'home_team', 'away_team', 'home_goals', 'away_goals', 'actual_goals', 'actual_btts', 'pattern_code']):
+                display_df = df[['match_date', 'home_team', 'away_team', 'home_goals', 'away_goals', 
+                               'actual_goals', 'actual_btts', 'pattern_code']].copy()
+                
+                display_df['result'] = display_df.apply(
+                    lambda x: f"{int(x['home_goals'])}-{int(x['away_goals'])}", axis=1
+                )
+                display_df['btts'] = display_df['actual_btts'].apply(lambda x: "✅" if x else "❌")
+                
+                st.dataframe(
+                    display_df[['match_date', 'home_team', 'away_team', 'result', 'actual_goals', 'btts', 'pattern_code']],
+                    hide_index=True,
+                    use_container_width=True
+                )
+                
+                # Pattern performance chart
+                if 'pattern_code' in df.columns and len(df) > 0:
+                    pattern_perf = df.groupby('pattern_code').agg({
+                        'id': 'count',
+                        'actual_btts': 'mean',
+                        'actual_goals': lambda x: (x >= 3).mean() if len(x) > 0 else 0
+                    }).round(3) * 100
+                    
+                    pattern_perf.columns = ['Matches', 'BTTS %', 'Over %']
+                    pattern_perf = pattern_perf[pattern_perf['Matches'] >= 3].sort_values('BTTS %', ascending=False).head(10)
+                    
+                    if not pattern_perf.empty:
+                        st.subheader("🔥 Hot Patterns (Last 50 Matches)")
+                        st.dataframe(pattern_perf, use_container_width=True)
+            else:
+                st.info("Incomplete match data available")
         else:
             st.info("No recent matches with results")
 
