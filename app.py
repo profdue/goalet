@@ -5,27 +5,22 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
 import json
-import psycopg2
-from psycopg2.extras import RealDictCursor
+from supabase import create_client, Client
 import hashlib
 
 # ============================================================================
-# DATABASE CONNECTION
+# SUPABASE CONNECTION
 # ============================================================================
 
-def init_connection():
-    """Initialize database connection"""
+@st.cache_resource
+def init_supabase():
+    """Initialize Supabase client"""
     try:
-        conn = psycopg2.connect(
-            host=st.secrets["DB_HOST"],
-            port=st.secrets["DB_PORT"],
-            database=st.secrets["DB_NAME"],
-            user=st.secrets["DB_USER"],
-            password=st.secrets["DB_PASSWORD"]
-        )
-        return conn
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key)
     except Exception as e:
-        st.error(f"Database connection failed: {e}")
+        st.error(f"Supabase connection failed: {e}")
         return None
 
 # ============================================================================
@@ -35,152 +30,158 @@ def init_connection():
 @st.cache_data(ttl=300)
 def load_teams():
     """Load all teams from database"""
-    conn = init_connection()
-    if not conn:
+    supabase = init_supabase()
+    if not supabase:
         return pd.DataFrame()
     
-    query = """
-    SELECT DISTINCT home_team as team FROM public.matches
-    UNION
-    SELECT DISTINCT away_team as team FROM public.matches
-    ORDER BY team;
-    """
-    
-    df = pd.read_sql(query, conn)
-    conn.close()
-    return df
+    try:
+        # Get home teams
+        home_response = supabase.table('matches').select('home_team').execute()
+        away_response = supabase.table('matches').select('away_team').execute()
+        
+        home_teams = [r['home_team'] for r in home_response.data]
+        away_teams = [r['away_team'] for r in away_response.data]
+        
+        teams = sorted(set(home_teams + away_teams))
+        return pd.DataFrame({'team': teams})
+    except Exception as e:
+        st.error(f"Error loading teams: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=300)
 def load_patterns():
     """Load all patterns from database"""
-    conn = init_connection()
-    if not conn:
+    supabase = init_supabase()
+    if not supabase:
         return pd.DataFrame()
     
-    query = """
-    SELECT 
-        pattern_code,
-        current_over_rate,
-        current_btts_rate,
-        total_matches,
-        confidence_score
-    FROM public.pattern_tracking
-    WHERE total_matches >= 5
-    ORDER BY confidence_score DESC;
-    """
-    
-    df = pd.read_sql(query, conn)
-    conn.close()
-    return df
+    try:
+        response = supabase.table('pattern_tracking')\
+            .select('pattern_code, current_over_rate, current_btts_rate, total_matches, confidence_score')\
+            .gte('total_matches', 5)\
+            .order('confidence_score', desc=True)\
+            .execute()
+        
+        return pd.DataFrame(response.data)
+    except Exception as e:
+        st.error(f"Error loading patterns: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=300)
 def load_team_stats(team, match_date):
     """Load team statistics up to a given date"""
-    conn = init_connection()
-    if not conn:
+    supabase = init_supabase()
+    if not supabase:
         return {}
     
-    query = """
-    WITH team_matches AS (
-        SELECT 
-            CASE WHEN home_team = %s THEN home_da ELSE away_da END as da,
-            CASE WHEN home_team = %s THEN home_btts ELSE away_btts END as btts,
-            CASE WHEN home_team = %s THEN home_over ELSE away_over END as over,
-            actual_goals,
-            actual_btts,
-            match_date,
-            ROW_NUMBER() OVER (ORDER BY match_date DESC) as recency_rank
-        FROM public.matches
-        WHERE (home_team = %s OR away_team = %s)
-            AND match_date < %s
-            AND result_entered = true
-        ORDER BY match_date DESC
-        LIMIT 10
-    )
-    SELECT 
-        AVG(da) as avg_da,
-        AVG(btts) as avg_btts,
-        AVG(over) as avg_over,
-        AVG(actual_goals) as avg_goals,
-        SUM(CASE WHEN actual_btts THEN 1 ELSE 0 END)::float / COUNT(*) as btts_rate
-    FROM team_matches;
-    """
-    
-    df = pd.read_sql(query, conn, params=[team, team, team, team, team, match_date])
-    conn.close()
-    
-    if not df.empty:
-        return df.iloc[0].to_dict()
-    return {}
+    try:
+        # Get matches where team played before the given date
+        response = supabase.table('matches')\
+            .select('home_da, away_da, home_btts, away_btts, home_over, away_over, actual_goals, actual_btts, match_date')\
+            .or_(f'home_team.eq.{team},away_team.eq.{team}')\
+            .lt('match_date', match_date.isoformat())\
+            .eq('result_entered', True)\
+            .order('match_date', desc=True)\
+            .limit(10)\
+            .execute()
+        
+        matches = response.data
+        if not matches:
+            return {}
+        
+        # Calculate team-specific stats
+        da_values = []
+        btts_values = []
+        over_values = []
+        goals = []
+        btts_actual = []
+        
+        for m in matches:
+            if m['home_team'] == team:
+                da_values.append(m['home_da'] or 50)
+                btts_values.append(m['home_btts'] or 50)
+                over_values.append(m['home_over'] or 50)
+            else:
+                da_values.append(m['away_da'] or 50)
+                btts_values.append(m['away_btts'] or 50)
+                over_values.append(m['away_over'] or 50)
+            
+            goals.append(m['actual_goals'] or 0)
+            btts_actual.append(1 if m['actual_btts'] else 0)
+        
+        return {
+            'avg_da': np.mean(da_values),
+            'avg_btts': np.mean(btts_values),
+            'avg_over': np.mean(over_values),
+            'avg_goals': np.mean(goals),
+            'btts_rate': np.mean(btts_actual)
+        }
+    except Exception as e:
+        st.error(f"Error loading team stats: {e}")
+        return {}
 
 def save_match_data(match_data):
-    """Save match data to database"""
-    conn = init_connection()
-    if not conn:
+    """Save match data to Supabase"""
+    supabase = init_supabase()
+    if not supabase:
         return False
     
     try:
-        cur = conn.cursor()
-        
         # Check if match exists
-        cur.execute("""
-            SELECT id FROM public.matches 
-            WHERE home_team = %s AND away_team = %s AND match_date = %s
-        """, (match_data['home_team'], match_data['away_team'], match_data['match_date']))
+        response = supabase.table('matches')\
+            .select('id')\
+            .eq('home_team', match_data['home_team'])\
+            .eq('away_team', match_data['away_team'])\
+            .eq('match_date', match_data['match_date'].isoformat())\
+            .execute()
         
-        existing = cur.fetchone()
+        existing = response.data
         
         if existing:
             # Update existing match
-            cur.execute("""
-                UPDATE public.matches 
-                SET home_da = %s, away_da = %s,
-                    home_btts = %s, away_btts = %s,
-                    home_over = %s, away_over = %s,
-                    home_goals = %s, away_goals = %s,
-                    actual_goals = %s, actual_btts = %s,
-                    result_entered = true
-                WHERE id = %s
-            """, (
-                match_data['home_da'], match_data['away_da'],
-                match_data['home_btts'], match_data['away_btts'],
-                match_data['home_over'], match_data['away_over'],
-                match_data['home_goals'], match_data['away_goals'],
-                match_data['home_goals'] + match_data['away_goals'],
-                match_data['home_goals'] > 0 and match_data['away_goals'] > 0,
-                existing[0]
-            ))
+            response = supabase.table('matches')\
+                .update({
+                    'home_da': match_data['home_da'],
+                    'away_da': match_data['away_da'],
+                    'home_btts': match_data['home_btts'],
+                    'away_btts': match_data['away_btts'],
+                    'home_over': match_data['home_over'],
+                    'away_over': match_data['away_over'],
+                    'home_goals': match_data['home_goals'],
+                    'away_goals': match_data['away_goals'],
+                    'actual_goals': match_data['home_goals'] + match_data['away_goals'],
+                    'actual_btts': match_data['home_goals'] > 0 and match_data['away_goals'] > 0,
+                    'result_entered': True
+                })\
+                .eq('id', existing[0]['id'])\
+                .execute()
         else:
             # Insert new match
-            cur.execute("""
-                INSERT INTO public.matches 
-                (home_team, away_team, league, match_date, 
-                 home_da, away_da, home_btts, away_btts, home_over, away_over,
-                 home_goals, away_goals, actual_goals, actual_btts, result_entered,
-                 created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, true, %s)
-            """, (
-                match_data['home_team'], match_data['away_team'], 
-                match_data.get('league', 'UNKNOWN'),
-                match_data['match_date'],
-                match_data['home_da'], match_data['away_da'],
-                match_data['home_btts'], match_data['away_btts'],
-                match_data['home_over'], match_data['away_over'],
-                match_data['home_goals'], match_data['away_goals'],
-                match_data['home_goals'] + match_data['away_goals'],
-                match_data['home_goals'] > 0 and match_data['away_goals'] > 0,
-                datetime.now()
-            ))
+            response = supabase.table('matches')\
+                .insert({
+                    'home_team': match_data['home_team'],
+                    'away_team': match_data['away_team'],
+                    'league': match_data.get('league', 'UNKNOWN'),
+                    'match_date': match_data['match_date'].isoformat(),
+                    'home_da': match_data['home_da'],
+                    'away_da': match_data['away_da'],
+                    'home_btts': match_data['home_btts'],
+                    'away_btts': match_data['away_btts'],
+                    'home_over': match_data['home_over'],
+                    'away_over': match_data['away_over'],
+                    'home_goals': match_data['home_goals'],
+                    'away_goals': match_data['away_goals'],
+                    'actual_goals': match_data['home_goals'] + match_data['away_goals'],
+                    'actual_btts': match_data['home_goals'] > 0 and match_data['away_goals'] > 0,
+                    'result_entered': True,
+                    'created_at': datetime.now().isoformat()
+                })\
+                .execute()
         
-        conn.commit()
-        cur.close()
-        conn.close()
         return True
         
     except Exception as e:
         st.error(f"Error saving match: {e}")
-        conn.rollback()
-        conn.close()
         return False
 
 # ============================================================================
@@ -218,6 +219,22 @@ class BettingPredictor:
                 'category': 'OVER',
                 'name': '🔥 TRIPLE CROWN = OVER 2.5'
             },
+            'rule_17': {   # Championship Home Win
+                'btts_lift': 0.214,
+                'over_lift': 0.234,
+                'confidence': 'LOW',
+                'sample': 7,
+                'category': 'OUTCOME',
+                'name': '🏴󰁧󰁢󰁳󰁿󰁴󰁿 CHAMPIONSHIP = HOME WIN'
+            },
+            'rule_5': {    # Home Advantage Flag
+                'btts_lift': -0.214,
+                'over_lift': -0.051,
+                'confidence': 'LOW',
+                'sample': 7,
+                'category': 'OUTCOME',
+                'name': '🏠 HOME ADVANTAGE = NO DRAW'
+            },
             'rule_7': {    # Mixed Defense
                 'btts_lift': -0.138,
                 'over_lift': -0.045,
@@ -225,6 +242,14 @@ class BettingPredictor:
                 'sample': 69,
                 'category': 'OUTCOME',
                 'name': '🔄 MIXED DEFENSE = WINNER'
+            },
+            'rule_8': {    # Weak Away
+                'btts_lift': -0.111,
+                'over_lift': -0.036,
+                'confidence': 'MEDIUM',
+                'sample': 18,
+                'category': 'UNDER',
+                'name': '🚫 WEAK AWAY = UNDER 2.5'
             },
             'rule_2': {    # Away Elite Attack
                 'btts_lift': -0.079,
@@ -241,6 +266,14 @@ class BettingPredictor:
                 'sample': 32,
                 'category': 'OUTCOME',
                 'name': '🎯 HOME ELITE ATTACK = WIN/DRAW'
+            },
+            'rule_20_away': {  # Away Elite Attack (Draw version)
+                'btts_lift': 0.000,
+                'over_lift': 0.051,
+                'confidence': 'HIGH',
+                'sample': 32,
+                'category': 'OUTCOME',
+                'name': '🎯 AWAY ELITE ATTACK = WIN/DRAW'
             },
             'rule_1': {    # [4,4] Defenses
                 'btts_lift': 0.028,
@@ -410,11 +443,11 @@ class BettingPredictor:
 def probability_gauge(prob, title, edge=None):
     """Create a probability gauge chart"""
     fig = go.Figure(go.Indicator(
-        mode = "gauge+number+delta",
-        value = prob * 100,
-        title = {'text': title, 'font': {'size': 16}},
-        delta = {'reference': 50, 'position': "top"} if edge else None,
-        gauge = {
+        mode="gauge+number+delta",
+        value=prob * 100,
+        title={'text': title, 'font': {'size': 16}},
+        delta={'reference': 50, 'position': "top"} if edge else None,
+        gauge={
             'axis': {'range': [0, 100], 'tickwidth': 1},
             'bar': {'color': "darkblue" if prob > 0.6 else "darkred" if prob < 0.4 else "darkorange"},
             'steps': [
