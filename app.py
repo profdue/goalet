@@ -3,10 +3,8 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime, timedelta
-import json
-from supabase import create_client, Client
-import hashlib
+from datetime import datetime
+from supabase import create_client
 
 # ============================================================================
 # SUPABASE CONNECTION
@@ -24,8 +22,153 @@ def init_supabase():
         return None
 
 # ============================================================================
-# DATA SAVING FUNCTIONS
+# DATABASE FUNCTIONS
 # ============================================================================
+
+def check_pressure_flags(home_da, away_da, home_btts, away_btts, home_over, away_over):
+    """Automatically determine pressure flags based on values"""
+    btts_pressure = (home_btts >= 60 and away_btts >= 60)
+    overs_pressure = (home_over >= 60 or away_over >= 60)
+    return btts_pressure, overs_pressure
+
+def check_rule_hits(match_data):
+    """Automatically check which rules apply based on input data"""
+    rule_hits = {}
+    
+    home_da = match_data['home_da']
+    away_da = match_data['away_da']
+    home_btts = match_data['home_btts']
+    away_btts = match_data['away_btts']
+    home_over = match_data['home_over']
+    away_over = match_data['away_over']
+    
+    # Calculate tiers (1-4, 1 is best)
+    def get_tier(value):
+        if value >= 70: return 1
+        if value >= 55: return 2
+        if value >= 40: return 3
+        return 4
+    
+    home_da_tier = get_tier(home_da)
+    away_da_tier = get_tier(away_da)
+    home_btts_tier = get_tier(home_btts)
+    away_btts_tier = get_tier(away_btts)
+    home_over_tier = get_tier(home_over)
+    away_over_tier = get_tier(away_over)
+    
+    # RULE 1: [4,4] DEFENSES = UNDER 2.5
+    if home_da_tier == 4 and away_da_tier == 4:
+        rule_hits['rule_1'] = {
+            'hit': True,
+            'name': '🐢 [4,4] DEFENSES = UNDER 2.5',
+            'category': 'UNDER'
+        }
+    
+    # RULE 2: AWAY ELITE ATTACK = WINNER
+    if away_btts_tier == 1:
+        rule_hits['rule_2'] = {
+            'hit': True,
+            'name': '✈️ AWAY ELITE ATTACK = WINNER',
+            'category': 'OUTCOME'
+        }
+    
+    # RULE 7: MIXED DEFENSE = WINNER
+    if (home_da_tier in [3,4] and away_da_tier in [1,2]) or (away_da_tier in [3,4] and home_da_tier in [1,2]):
+        rule_hits['rule_7'] = {
+            'hit': True,
+            'name': '🔄 MIXED DEFENSE = WINNER',
+            'category': 'OUTCOME'
+        }
+    
+    # RULE 8: WEAK AWAY = UNDER 2.5
+    if away_da_tier == 4 and home_da_tier <= 3:
+        rule_hits['rule_8'] = {
+            'hit': True,
+            'name': '🚫 WEAK AWAY = UNDER 2.5',
+            'category': 'UNDER'
+        }
+    
+    # RULE 10: TIER2 HOME vs TIER3 AWAY = LOSS
+    if home_da_tier == 2 and away_da_tier == 3:
+        rule_hits['rule_10'] = {
+            'hit': True,
+            'name': '⚠️ TIER2 HOME vs TIER3 AWAY = LOSS',
+            'category': 'OUTCOME'
+        }
+    
+    # RULE 15: ELITE HOME = DRAW/AWAY WIN
+    if home_da_tier == 2 and home_btts_tier <= 2:
+        rule_hits['rule_15'] = {
+            'hit': True,
+            'name': '👑 ELITE HOME = DRAW/AWAY WIN',
+            'category': 'OUTCOME'
+        }
+    
+    # RULE 20_HOME: HOME ELITE ATTACK = WIN/DRAW
+    if home_btts_tier == 1:
+        rule_hits['rule_20_home'] = {
+            'hit': True,
+            'name': '🎯 HOME ELITE ATTACK = WIN/DRAW',
+            'category': 'OUTCOME'
+        }
+    
+    # RULE 20_AWAY: AWAY ELITE ATTACK = WIN/DRAW
+    if away_btts_tier == 1:
+        rule_hits['rule_20_away'] = {
+            'hit': True,
+            'name': '🎯 AWAY ELITE ATTACK = WIN/DRAW',
+            'category': 'OUTCOME'
+        }
+    
+    # RULE 21: TRIPLE CROWN = OVER 2.5
+    if home_over_tier <= 2 and away_over_tier <= 2 and home_da_tier <= 2 and away_da_tier <= 2:
+        rule_hits['rule_21'] = {
+            'hit': True,
+            'name': '🔥 TRIPLE CROWN = OVER 2.5',
+            'category': 'OVER'
+        }
+    
+    # RULE 22: GRAND UNIFIED = UNDER 2.5
+    if home_da_tier == 4 and away_da_tier == 4 and home_btts_tier == 4 and away_btts_tier == 4:
+        rule_hits['rule_22'] = {
+            'hit': True,
+            'name': '🏆 GRAND UNIFIED = UNDER 2.5',
+            'category': 'UNDER'
+        }
+    
+    return rule_hits
+
+def get_importance_score(home_team, away_team, league):
+    """Get importance score from database based on teams/league"""
+    supabase = init_supabase()
+    if not supabase:
+        return 0
+    
+    try:
+        # Check if it's a derby
+        response = supabase.table('matches')\
+            .select('derby')\
+            .eq('home_team', home_team)\
+            .eq('away_team', away_team)\
+            .maybe_single()\
+            .execute()
+        
+        if response.data and response.data.get('derby'):
+            return 2
+        
+        # Check if it's a relegation battle
+        response = supabase.table('matches')\
+            .select('relegation')\
+            .eq('league', league)\
+            .maybe_single()\
+            .execute()
+        
+        if response.data and response.data.get('relegation'):
+            return 1
+            
+        return 0
+    except:
+        return 0
 
 def save_match_data(match_data):
     """Save match data to Supabase"""
@@ -44,7 +187,7 @@ def save_match_data(match_data):
         
         existing = response.data
         
-        # Calculate tier based on DA values (1-4 scale)
+        # Calculate tier based on values
         def calculate_tier(value):
             if value >= 70: return 1
             if value >= 55: return 2
@@ -74,7 +217,8 @@ def save_match_data(match_data):
                     'result_entered': True,
                     'btts_pressure_flag': match_data['btts_pressure_flag'],
                     'overs_pressure_flag': match_data['overs_pressure_flag'],
-                    'importance_score': match_data.get('importance_score', 0)
+                    'rule_hits': match_data['rule_hits'],
+                    'importance_score': match_data['importance_score']
                 })\
                 .eq('id', existing[0]['id'])\
                 .execute()
@@ -84,7 +228,7 @@ def save_match_data(match_data):
                 .insert({
                     'home_team': match_data['home_team'],
                     'away_team': match_data['away_team'],
-                    'league': match_data.get('league', 'MANUAL ENTRY'),
+                    'league': match_data['league'],
                     'match_date': match_data['match_date'].isoformat(),
                     'home_da': match_data['home_da'],
                     'away_da': match_data['away_da'],
@@ -105,7 +249,8 @@ def save_match_data(match_data):
                     'result_entered': True,
                     'btts_pressure_flag': match_data['btts_pressure_flag'],
                     'overs_pressure_flag': match_data['overs_pressure_flag'],
-                    'importance_score': match_data.get('importance_score', 0),
+                    'rule_hits': match_data['rule_hits'],
+                    'importance_score': match_data['importance_score'],
                     'created_at': datetime.now().isoformat()
                 })\
                 .execute()
@@ -125,70 +270,69 @@ class BettingPredictor:
         self.BASELINE_BTTS = 0.50
         self.BASELINE_OVER = 0.48
         
-        # Rule weights from your database analysis
+        # Rule weights from database analysis
         self.RULE_WEIGHTS = {
-            'rule_15': {   # Elite Home
+            'rule_15': {
                 'btts_lift': 0.190,
                 'over_lift': 0.244,
                 'confidence': 'HIGH',
                 'sample': 29,
-                'category': 'OUTCOME',
                 'name': '👑 ELITE HOME = DRAW/AWAY WIN'
             },
-            'rule_10': {   # Tier2 Home vs Tier3 Away
+            'rule_10': {
                 'btts_lift': 0.167,
                 'over_lift': 0.253,
                 'confidence': 'MEDIUM',
                 'sample': 15,
-                'category': 'OUTCOME',
                 'name': '⚠️ TIER2 HOME vs TIER3 AWAY = LOSS'
             },
-            'rule_21': {   # Triple Crown
+            'rule_21': {
                 'btts_lift': 0.214,
                 'over_lift': 0.234,
                 'confidence': 'MEDIUM',
                 'sample': 14,
-                'category': 'OVER',
                 'name': '🔥 TRIPLE CROWN = OVER 2.5'
             },
-            'rule_7': {    # Mixed Defense
+            'rule_7': {
                 'btts_lift': -0.138,
                 'over_lift': -0.045,
                 'confidence': 'HIGH',
                 'sample': 69,
-                'category': 'OUTCOME',
                 'name': '🔄 MIXED DEFENSE = WINNER'
             },
-            'rule_2': {    # Away Elite Attack
+            'rule_2': {
                 'btts_lift': -0.079,
                 'over_lift': -0.033,
                 'confidence': 'HIGH',
                 'sample': 38,
-                'category': 'OUTCOME',
                 'name': '✈️ AWAY ELITE ATTACK = WINNER'
             },
-            'rule_20_home': {  # Home Elite Attack
+            'rule_20_home': {
                 'btts_lift': 0.063,
                 'over_lift': 0.114,
                 'confidence': 'HIGH',
                 'sample': 32,
-                'category': 'OUTCOME',
                 'name': '🎯 HOME ELITE ATTACK = WIN/DRAW'
             },
-            'rule_1': {    # [4,4] Defenses
+            'rule_20_away': {
+                'btts_lift': 0.000,
+                'over_lift': 0.051,
+                'confidence': 'HIGH',
+                'sample': 32,
+                'name': '🎯 AWAY ELITE ATTACK = WIN/DRAW'
+            },
+            'rule_1': {
                 'btts_lift': 0.028,
                 'over_lift': -0.258,
                 'confidence': 'HIGH',
                 'sample': 36,
-                'category': 'UNDER',
                 'name': '🐢 [4,4] DEFENSES = UNDER 2.5'
             },
-            'rule_22': {   # Grand Unified
+            'rule_22': {
                 'btts_lift': 0.000,
                 'over_lift': -0.389,
                 'confidence': 'HIGH',
                 'sample': 22,
-                'category': 'UNDER',
                 'name': '🏆 GRAND UNIFIED = UNDER 2.5'
             }
         }
@@ -212,28 +356,32 @@ class BettingPredictor:
         rule_categories = {}
         total_weight = 0
         
-        # 1. Apply rule hits with confidence weighting
-        active_rules = [r for r, data in rule_hits.items() if data.get('hit') == True]
-        
-        for rule_id in active_rules:
-            rule = self.RULE_WEIGHTS.get(rule_id)
-            if rule:
-                confidence_weight = 1.0 if rule['confidence'] == 'HIGH' else 0.7 if rule['confidence'] == 'MEDIUM' else 0.4
-                
-                btts_prob += rule['btts_lift'] * confidence_weight
-                over_prob += rule['over_lift'] * confidence_weight
-                total_weight += confidence_weight
-                
-                rule_categories[rule['category']] = rule_categories.get(rule['category'], 0) + 1
-                
-                evidence.append({
-                    'factor': rule['name'],
-                    'rule_id': rule_id,
-                    'impact': f"{rule['btts_lift']*100:.1f}% BTTS, {rule['over_lift']*100:.1f}% Over",
-                    'confidence': rule['confidence'],
-                    'category': rule['category'],
-                    'sample_size': rule['sample']
-                })
+        # 1. Apply rule hits
+        for rule_id, rule_data in rule_hits.items():
+            if rule_data.get('hit') == True:
+                rule = self.RULE_WEIGHTS.get(rule_id)
+                if rule:
+                    confidence_weight = 1.0 if rule['confidence'] == 'HIGH' else 0.7 if rule['confidence'] == 'MEDIUM' else 0.4
+                    
+                    btts_prob += rule['btts_lift'] * confidence_weight
+                    over_prob += rule['over_lift'] * confidence_weight
+                    total_weight += confidence_weight
+                    
+                    # Determine category from rule_id
+                    category = 'OUTCOME'
+                    if rule_id in ['rule_1', 'rule_8', 'rule_22']:
+                        category = 'UNDER'
+                    elif rule_id in ['rule_21']:
+                        category = 'OVER'
+                    
+                    rule_categories[category] = rule_categories.get(category, 0) + 1
+                    
+                    evidence.append({
+                        'factor': rule['name'],
+                        'impact': f"{rule['btts_lift']*100:.1f}% BTTS, {rule['over_lift']*100:.1f}% Over",
+                        'confidence': rule['confidence'],
+                        'sample_size': rule['sample']
+                    })
         
         # 2. Apply synergy bonuses
         for category, count in rule_categories.items():
@@ -275,10 +423,22 @@ class BettingPredictor:
         btts_prob += (avg_attack - 0.5) * 0.2
         over_prob += (avg_attack - 0.5) * 0.25
         
-        # 5. BTTS inputs influence
-        if home_btts and away_btts:
-            avg_btts = ((home_btts or 50) + (away_btts or 50)) / 200
-            btts_prob += (avg_btts - 0.5) * 0.15
+        # 5. Importance score
+        if importance_score >= 2:
+            over_prob += 0.10
+            btts_prob += 0.05
+            evidence.append({
+                'factor': 'High Importance Match (Derby/Playoff)',
+                'impact': '+10% to Over, +5% to BTTS',
+                'confidence': 'HIGH'
+            })
+        elif importance_score >= 1:
+            over_prob += 0.05
+            evidence.append({
+                'factor': 'Important Match',
+                'impact': '+5% to Over',
+                'confidence': 'MEDIUM'
+            })
         
         # Clamp probabilities
         btts_prob = max(0.10, min(0.90, btts_prob))
@@ -304,37 +464,8 @@ class BettingPredictor:
                 'confidence': overall_confidence
             },
             'evidence': evidence[:5],
-            'recommended_bets': self.recommend_bets(btts_prob, over_prob, rule_categories)
+            'rule_count': len(rule_hits)
         }
-    
-    def recommend_bets(self, btts_prob, over_prob, rule_categories):
-        bets = []
-        
-        if over_prob > 0.65 and rule_categories.get('OVER', 0) >= 1:
-            bets.append({
-                'market': 'Over 2.5',
-                'confidence': 'HIGH' if over_prob > 0.75 else 'MEDIUM',
-                'reason': f"{over_prob*100:.0f}% probability with {rule_categories.get('OVER', 0)} OVER rules",
-                'edge': round(over_prob - self.BASELINE_OVER, 3)
-            })
-        
-        if over_prob < 0.35 and rule_categories.get('UNDER', 0) >= 2:
-            bets.append({
-                'market': 'Under 2.5',
-                'confidence': 'HIGH',
-                'reason': f"Only {over_prob*100:.0f}% Over probability with {rule_categories.get('UNDER', 0)} UNDER rules",
-                'edge': round(self.BASELINE_OVER - over_prob, 3)
-            })
-        
-        if btts_prob > 0.65:
-            bets.append({
-                'market': 'BTTS Yes',
-                'confidence': 'HIGH' if btts_prob > 0.75 else 'MEDIUM',
-                'reason': f"{btts_prob*100:.0f}% probability",
-                'edge': round(btts_prob - self.BASELINE_BTTS, 3)
-            })
-        
-        return bets
 
 # ============================================================================
 # UI COMPONENTS
@@ -379,8 +510,7 @@ def main():
     st.set_page_config(
         page_title="Football Betting Predictor",
         page_icon="⚽",
-        layout="wide",
-        initial_sidebar_state="expanded"
+        layout="wide"
     )
     
     # Custom CSS
@@ -400,23 +530,12 @@ def main():
             margin-top: 1rem;
             margin-bottom: 1rem;
         }
-        .prediction-card {
-            background-color: #F3F4F6;
-            padding: 1.5rem;
-            border-radius: 10px;
-            margin: 1rem 0;
-        }
         .rule-highlight {
             background-color: #EFF6FF;
             padding: 0.5rem;
             border-left: 4px solid #3B82F6;
             margin: 0.5rem 0;
-        }
-        .metric-card {
-            background-color: white;
-            padding: 1rem;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-radius: 4px;
         }
         .stButton button {
             width: 100%;
@@ -427,7 +546,6 @@ def main():
         </style>
     """, unsafe_allow_html=True)
     
-    # Header
     st.markdown('<div class="main-header">⚽ FOOTBALL BETTING PREDICTOR</div>', unsafe_allow_html=True)
     st.markdown("---")
     
@@ -435,57 +553,19 @@ def main():
     if 'predictor' not in st.session_state:
         st.session_state.predictor = BettingPredictor()
     
-    if 'matches' not in st.session_state:
-        st.session_state.matches = []
-    
-    # Sidebar - Navigation
-    with st.sidebar:
-        st.markdown("## 🧭 NAVIGATION")
-        app_mode = st.radio(
-            "Select Mode",
-            ["📝 Input Match Data", "🔮 View Predictions", "📊 Dashboard", "📥 Batch Import", "📈 Performance"]
-        )
-        
-        st.markdown("---")
-        
-        if app_mode == "📝 Input Match Data":
-            st.markdown("## 📋 QUICK STATS")
-            st.metric("Matches Today", "0")
-            st.metric("Avg Edge Found", "0%")
-            st.metric("Patterns Active", "0")
-    
-    # Main content based on mode
-    if app_mode == "📝 Input Match Data":
-        input_mode()
-    elif app_mode == "🔮 View Predictions":
-        predictions_mode()
-    elif app_mode == "📊 Dashboard":
-        dashboard_mode()
-    elif app_mode == "📥 Batch Import":
-        batch_import_mode()
-    elif app_mode == "📈 Performance":
-        performance_mode()
-
-# ============================================================================
-# INPUT MODE - MANUAL ENTRY
-# ============================================================================
-
-def input_mode():
-    st.markdown('<div class="sub-header">📝 MANUAL MATCH DATA INPUT</div>', unsafe_allow_html=True)
-    
-    # Main input form - ALL MANUAL
+    # Main input form
     with st.form("match_input_form"):
-        st.markdown("### 🏆 MATCH INFORMATION")
+        st.markdown('<div class="sub-header">📝 MANUAL MATCH DATA INPUT</div>', unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
         
         with col1:
-            home_team = st.text_input("Home Team Name", value="", placeholder="e.g., Arsenal")
-            match_date = st.date_input("Match Date", datetime.now())
+            home_team = st.text_input("🏠 Home Team", value="", placeholder="e.g., Arsenal")
+            match_date = st.date_input("📅 Match Date", datetime.now())
             
         with col2:
-            away_team = st.text_input("Away Team Name", value="", placeholder="e.g., Chelsea")
-            league = st.text_input("League", value="", placeholder="e.g., PREMIER LEAGUE")
+            away_team = st.text_input("✈️ Away Team", value="", placeholder="e.g., Chelsea")
+            league = st.text_input("🏆 League", value="", placeholder="e.g., PREMIER LEAGUE")
         
         st.markdown("---")
         st.markdown("### ⚡ DANGEROUS ATTACK (DA) - Enter values 0-100")
@@ -493,10 +573,12 @@ def input_mode():
         col1, col2 = st.columns(2)
         
         with col1:
-            home_da = st.number_input("Home DA Value", min_value=0, max_value=100, value=50, step=1)
+            home_da = st.number_input("Home DA", min_value=0, max_value=100, value=50, step=1,
+                                     help="Higher values = more dangerous attacks")
         
         with col2:
-            away_da = st.number_input("Away DA Value", min_value=0, max_value=100, value=50, step=1)
+            away_da = st.number_input("Away DA", min_value=0, max_value=100, value=50, step=1,
+                                     help="Higher values = more dangerous attacks")
         
         st.markdown("---")
         st.markdown("### 🎯 BOTH TEAMS TO SCORE (BTTS)")
@@ -504,20 +586,15 @@ def input_mode():
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            btts_prediction = st.radio(
-                "BTTS Prediction",
-                ["YES", "NO"],
-                horizontal=True,
-                index=0
-            )
+            btts_prediction = st.radio("BTTS Prediction", ["YES", "NO"], horizontal=True, index=0)
         
         with col2:
             home_btts = st.number_input("Home BTTS %", min_value=0, max_value=100, value=50, step=1,
-                                       help="Your confidence % that Home team will score")
+                                       help="Confidence that Home team will score")
         
         with col3:
             away_btts = st.number_input("Away BTTS %", min_value=0, max_value=100, value=50, step=1,
-                                       help="Your confidence % that Away team will score")
+                                       help="Confidence that Away team will score")
         
         st.markdown("---")
         st.markdown("### ⚽ OVER/UNDER")
@@ -528,42 +605,11 @@ def input_mode():
             over_line = st.selectbox("Over Line", [0.5, 1.5, 2.5, 3.5, 4.5], index=2)
         
         with col2:
-            over_prediction = st.radio(
-                "Over/Under",
-                ["OVER", "UNDER"],
-                horizontal=True,
-                index=0
-            )
+            over_prediction = st.radio("Over/Under", ["OVER", "UNDER"], horizontal=True, index=0)
         
         with col3:
             over_value = st.number_input("Over %", min_value=0, max_value=100, value=50, step=1,
-                                       help="Your confidence % for Over")
-        
-        st.markdown("---")
-        st.markdown("### 🏆 PRESSURE FLAGS")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            btts_pressure = st.checkbox("BTTS Pressure Flag", value=False)
-        
-        with col2:
-            overs_pressure = st.checkbox("Overs Pressure Flag", value=False)
-        
-        st.markdown("---")
-        st.markdown("### 📝 RULE HITS (Select rules that apply)")
-        
-        rule_options = [
-            "rule_1", "rule_2", "rule_7", "rule_8", "rule_10", 
-            "rule_15", "rule_17", "rule_20_home", "rule_20_away", 
-            "rule_21", "rule_22", "rule_28a"
-        ]
-        
-        selected_rules = st.multiselect("Select Active Rules", rule_options)
-        
-        rule_hits = {}
-        for rule in selected_rules:
-            rule_hits[rule] = {"hit": True}
+                                       help="Confidence for Over")
         
         st.markdown("---")
         st.markdown("### ⚽ FINAL SCORE (Enter after match)")
@@ -576,25 +622,42 @@ def input_mode():
         with col2:
             away_goals = st.number_input("Away Goals", min_value=0, max_value=20, value=0, step=1)
         
-        importance_score = st.slider("Importance Score (0-2)", min_value=0, max_value=2, value=0, step=1,
-                                     help="0=Normal, 1=Important, 2=Very Important (derby/playoff)")
+        st.markdown("---")
         
         # Submit buttons
-        st.markdown("---")
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         
         with col1:
             generate_pred = st.form_submit_button("🔮 GENERATE PREDICTION", use_container_width=True)
         
         with col2:
             save_match = st.form_submit_button("💾 SAVE TO DATABASE", use_container_width=True)
-        
-        with col3:
-            save_and_new = st.form_submit_button("💾 SAVE & ADD NEW", use_container_width=True)
     
     # Handle form submission
     if generate_pred:
-        with st.spinner("Generating prediction..."):
+        with st.spinner("Analyzing match data..."):
+            
+            # Automatically determine pressure flags
+            btts_pressure, overs_pressure = check_pressure_flags(
+                home_da, away_da, home_btts, away_btts, over_value, over_value
+            )
+            
+            # Prepare match data for rule checking
+            match_check_data = {
+                'home_da': home_da,
+                'away_da': away_da,
+                'home_btts': home_btts,
+                'away_btts': away_btts,
+                'home_over': over_value,
+                'away_over': over_value
+            }
+            
+            # Automatically check which rules apply
+            rule_hits = check_rule_hits(match_check_data)
+            
+            # Get importance score from database
+            importance_score = get_importance_score(home_team, away_team, league)
+            
             # Generate prediction
             prediction = st.session_state.predictor.predict(
                 home_da=float(home_da),
@@ -609,12 +672,36 @@ def input_mode():
             
             # Store in session state
             st.session_state.current_prediction = prediction
-            st.session_state.show_prediction = True
+            st.session_state.auto_detected = {
+                'btts_pressure': btts_pressure,
+                'overs_pressure': overs_pressure,
+                'rule_hits': rule_hits,
+                'importance_score': importance_score
+            }
+            
+            st.rerun()
     
-    if save_match or save_and_new:
+    if save_match:
         if not home_team or not away_team:
             st.error("Please enter both team names")
         else:
+            # Automatically determine everything for saving
+            btts_pressure, overs_pressure = check_pressure_flags(
+                home_da, away_da, home_btts, away_btts, over_value, over_value
+            )
+            
+            match_check_data = {
+                'home_da': home_da,
+                'away_da': away_da,
+                'home_btts': home_btts,
+                'away_btts': away_btts,
+                'home_over': over_value,
+                'away_over': over_value
+            }
+            
+            rule_hits = check_rule_hits(match_check_data)
+            importance_score = get_importance_score(home_team, away_team, league)
+            
             # Prepare match data
             match_data = {
                 'home_team': home_team.strip(),
@@ -631,320 +718,106 @@ def input_mode():
                 'away_goals': int(away_goals),
                 'btts_pressure_flag': btts_pressure,
                 'overs_pressure_flag': overs_pressure,
+                'rule_hits': rule_hits,
                 'importance_score': importance_score
             }
             
             # Save to database
             if save_match_data(match_data):
                 st.success(f"✅ Match saved successfully!")
-                
-                if save_and_new:
-                    st.rerun()
-            else:
-                st.error("Failed to save match")
     
-    # Show prediction if generated
-    if st.session_state.get('show_prediction', False):
+    # Display prediction and auto-detected info
+    if st.session_state.get('current_prediction'):
         st.markdown("---")
-        display_prediction(st.session_state.current_prediction)
-
-# ============================================================================
-# PREDICTION DISPLAY
-# ============================================================================
-
-def display_prediction(prediction):
-    """Display prediction results"""
-    st.markdown('<div class="sub-header">🔮 LIVE PREDICTION</div>', unsafe_allow_html=True)
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.plotly_chart(
-            probability_gauge(
-                prediction['btts']['probability'], 
-                "BTTS PROBABILITY",
-                prediction['btts']['edge']
-            ),
-            use_container_width=True
-        )
-        st.metric(
-            "Edge vs 50% Baseline",
-            f"{prediction['btts']['edge']*100:+.1f}%",
-            delta_color="normal"
-        )
-    
-    with col2:
-        st.plotly_chart(
-            probability_gauge(
-                prediction['over_2_5']['probability'], 
-                "OVER 2.5 PROBABILITY",
-                prediction['over_2_5']['edge']
-            ),
-            use_container_width=True
-        )
-        st.metric(
-            "Edge vs 48% Baseline",
-            f"{prediction['over_2_5']['edge']*100:+.1f}%",
-            delta_color="normal"
-        )
-    
-    # Confidence badges
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        conf_color = {
-            'HIGH': '🟢',
-            'MEDIUM': '🟡',
-            'LOW': '🔴'
-        }.get(prediction['btts']['confidence'], '⚪')
         
-        st.markdown(f"**BTTS Confidence:** {conf_color} {prediction['btts']['confidence']}")
-    
-    with col2:
-        conf_color = {
-            'HIGH': '🟢',
-            'MEDIUM': '🟡',
-            'LOW': '🔴'
-        }.get(prediction['over_2_5']['confidence'], '⚪')
-        
-        st.markdown(f"**Over Confidence:** {conf_color} {prediction['over_2_5']['confidence']}")
-    
-    with col3:
-        st.markdown(f"**Evidence Count:** {len(prediction['evidence'])} factors")
-    
-    st.markdown("---")
-    
-    # Evidence panel
-    st.markdown("### 🕵️ KEY FACTORS")
-    
-    if prediction['evidence']:
-        for evidence in prediction['evidence']:
-            confidence_icon = {
-                'HIGH': '🟢',
-                'MEDIUM': '🟡',
-                'LOW': '🔴'
-            }.get(evidence.get('confidence', 'LOW'), '⚪')
+        # Show auto-detected information
+        if st.session_state.get('auto_detected'):
+            auto = st.session_state.auto_detected
             
-            with st.container():
+            st.markdown('<div class="sub-header">🔍 AUTO-DETECTED FACTORS</div>', unsafe_allow_html=True)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**🏁 PRESSURE FLAGS**")
+                if auto['btts_pressure']:
+                    st.success("✅ BTTS Pressure Flag: ACTIVE")
+                else:
+                    st.info("BTTS Pressure Flag: Inactive")
+                    
+                if auto['overs_pressure']:
+                    st.success("✅ Overs Pressure Flag: ACTIVE")
+                else:
+                    st.info("Overs Pressure Flag: Inactive")
+            
+            with col2:
+                st.markdown("**⭐ IMPORTANCE SCORE**")
+                if auto['importance_score'] == 2:
+                    st.error("🔥 DERBY / PLAYOFF MATCH")
+                elif auto['importance_score'] == 1:
+                    st.warning("⚠️ Important Match")
+                else:
+                    st.info("Regular Match")
+            
+            st.markdown("**📋 ACTIVE RULES**")
+            if auto['rule_hits']:
+                for rule_id, rule_data in auto['rule_hits'].items():
+                    st.markdown(f"""
+                    <div class="rule-highlight">
+                        <strong>{rule_data['name']}</strong>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("No rules activated for this match")
+        
+        st.markdown("---")
+        
+        # Show prediction
+        pred = st.session_state.current_prediction
+        
+        st.markdown('<div class="sub-header">🔮 PREDICTION RESULTS</div>', unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.plotly_chart(
+                probability_gauge(pred['btts']['probability'], "BTTS PROBABILITY"),
+                use_container_width=True
+            )
+            st.metric("Edge vs 50%", f"{pred['btts']['edge']*100:+.1f}%")
+        
+        with col2:
+            st.plotly_chart(
+                probability_gauge(pred['over_2_5']['probability'], "OVER 2.5 PROBABILITY"),
+                use_container_width=True
+            )
+            st.metric("Edge vs 48%", f"{pred['over_2_5']['edge']*100:+.1f}%")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            conf_color = {'HIGH': '🟢', 'MEDIUM': '🟡', 'LOW': '🔴'}.get(pred['btts']['confidence'], '⚪')
+            st.markdown(f"**BTTS Confidence:** {conf_color} {pred['btts']['confidence']}")
+        
+        with col2:
+            conf_color = {'HIGH': '🟢', 'MEDIUM': '🟡', 'LOW': '🔴'}.get(pred['over_2_5']['confidence'], '⚪')
+            st.markdown(f"**Over Confidence:** {conf_color} {pred['over_2_5']['confidence']}")
+        
+        with col3:
+            st.markdown(f"**Active Rules:** {pred['rule_count']}")
+        
+        if pred['evidence']:
+            st.markdown("---")
+            st.markdown("### 🕵️ KEY FACTORS")
+            for evidence in pred['evidence']:
+                conf_icon = {'HIGH': '🟢', 'MEDIUM': '🟡', 'LOW': '🔴'}.get(evidence.get('confidence', 'LOW'), '⚪')
                 st.markdown(f"""
                 <div class="rule-highlight">
                     <strong>{evidence['factor']}</strong><br>
-                    Impact: {evidence['impact']} {confidence_icon}<br>
+                    Impact: {evidence['impact']} {conf_icon}<br>
                     <small>Sample: {evidence.get('sample_size', 'N/A')} matches</small>
                 </div>
                 """, unsafe_allow_html=True)
-    else:
-        st.info("No rules activated. Add rule hits to see their impact.")
-    
-    # Recommended bets
-    if prediction.get('recommended_bets'):
-        st.markdown("---")
-        st.markdown("### 💰 RECOMMENDED BETS")
-        
-        for bet in prediction['recommended_bets']:
-            conf_color = '🟢' if bet['confidence'] == 'HIGH' else '🟡' if bet['confidence'] == 'MEDIUM' else '🔴'
-            st.info(f"{conf_color} **{bet['market']}**: {bet['reason']} (Edge: {bet['edge']*100:+.1f}%)")
-
-# ============================================================================
-# PREDICTIONS MODE
-# ============================================================================
-
-def predictions_mode():
-    st.markdown('<div class="sub-header">🔮 ALL PREDICTIONS</div>', unsafe_allow_html=True)
-    
-    # Show sample predictions from session
-    if st.session_state.get('current_prediction'):
-        st.markdown("### Current Match Prediction")
-        display_prediction(st.session_state.current_prediction)
-    else:
-        st.info("No predictions available. Enter match data in Input Mode first.")
-
-# ============================================================================
-# DASHBOARD MODE
-# ============================================================================
-
-def dashboard_mode():
-    st.markdown('<div class="sub-header">📊 STATISTICAL DASHBOARD</div>', unsafe_allow_html=True)
-    
-    st.info("Dashboard will populate as you add more matches to the database.")
-    
-    # Placeholder charts
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Total Matches", "0", "0")
-    
-    with col2:
-        st.metric("BTTS Rate", "0%", "0%")
-    
-    with col3:
-        st.metric("Over 2.5 Rate", "0%", "0%")
-    
-    with col4:
-        st.metric("Active Patterns", "0", "0")
-    
-    st.markdown("---")
-    
-    # Rule effectiveness chart placeholder
-    st.markdown("### 📈 RULE EFFECTIVENESS (Sample Data)")
-    
-    rule_data = pd.DataFrame([
-        {"rule": "rule_15", "btts_edge": 0.190, "over_edge": 0.244, "confidence": "HIGH"},
-        {"rule": "rule_10", "btts_edge": 0.167, "over_edge": 0.253, "confidence": "MEDIUM"},
-        {"rule": "rule_21", "btts_edge": 0.214, "over_edge": 0.234, "confidence": "MEDIUM"},
-        {"rule": "rule_7", "btts_edge": -0.138, "over_edge": -0.045, "confidence": "HIGH"},
-        {"rule": "rule_2", "btts_edge": -0.079, "over_edge": -0.033, "confidence": "HIGH"},
-        {"rule": "rule_22", "btts_edge": 0.000, "over_edge": -0.389, "confidence": "HIGH"},
-    ])
-    
-    fig = px.bar(
-        rule_data,
-        x="rule",
-        y=["btts_edge", "over_edge"],
-        barmode="group",
-        title="Rule Edge Analysis (Based on Historical Data)",
-        labels={"value": "Edge", "variable": "Metric"},
-        color_discrete_map={"btts_edge": "blue", "over_edge": "red"}
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-
-# ============================================================================
-# BATCH IMPORT MODE
-# ============================================================================
-
-def batch_import_mode():
-    st.markdown('<div class="sub-header">📦 BATCH IMPORT</div>', unsafe_allow_html=True)
-    
-    st.markdown("""
-    Upload a CSV file with the following columns:
-    - home_team
-    - away_team
-    - match_date (YYYY-MM-DD)
-    - home_da (0-100)
-    - away_da (0-100)
-    - btts_prediction (YES/NO)
-    - over_line (2.5, etc.)
-    - over_prediction (OVER/UNDER)
-    - home_goals (optional)
-    - away_goals (optional)
-    - league (optional)
-    """)
-    
-    # Template download
-    template_df = pd.DataFrame({
-        'home_team': ['Arsenal', 'Liverpool'],
-        'away_team': ['Chelsea', 'Man City'],
-        'match_date': ['2024-03-15', '2024-03-16'],
-        'home_da': [65, 72],
-        'away_da': [58, 68],
-        'btts_prediction': ['YES', 'NO'],
-        'over_line': [2.5, 2.5],
-        'over_prediction': ['OVER', 'UNDER'],
-        'home_goals': [2, 0],
-        'away_goals': [1, 1],
-        'league': ['EPL', 'EPL']
-    })
-    
-    csv = template_df.to_csv(index=False)
-    st.download_button(
-        label="📥 Download Template CSV",
-        data=csv,
-        file_name="match_import_template.csv",
-        mime="text/csv"
-    )
-    
-    uploaded_file = st.file_uploader("Choose CSV file", type="csv")
-    
-    if uploaded_file is not None:
-        df = pd.read_csv(uploaded_file)
-        st.write("Preview:")
-        st.dataframe(df.head())
-        
-        if st.button("🚀 IMPORT ALL"):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            success_count = 0
-            error_count = 0
-            
-            for idx, row in df.iterrows():
-                try:
-                    status_text.text(f"Processing row {idx + 1}/{len(df)}")
-                    
-                    match_data = {
-                        'home_team': str(row['home_team']),
-                        'away_team': str(row['away_team']),
-                        'league': str(row.get('league', 'BATCH IMPORT')),
-                        'match_date': pd.to_datetime(row['match_date']).date(),
-                        'home_da': float(row['home_da']),
-                        'away_da': float(row['away_da']),
-                        'home_btts': 70 if str(row['btts_prediction']).upper() == 'YES' else 30,
-                        'away_btts': 70 if str(row['btts_prediction']).upper() == 'YES' else 30,
-                        'home_over': 70 if str(row['over_prediction']).upper() == 'OVER' else 30,
-                        'away_over': 70 if str(row['over_prediction']).upper() == 'OVER' else 30,
-                        'home_goals': int(row.get('home_goals', 0)),
-                        'away_goals': int(row.get('away_goals', 0)),
-                        'btts_pressure_flag': False,
-                        'overs_pressure_flag': False,
-                        'importance_score': 0
-                    }
-                    
-                    if save_match_data(match_data):
-                        success_count += 1
-                    else:
-                        error_count += 1
-                    
-                except Exception as e:
-                    error_count += 1
-                    st.error(f"Error in row {idx + 1}: {e}")
-                
-                progress_bar.progress((idx + 1) / len(df))
-            
-            status_text.text("Import complete!")
-            st.success(f"✅ Successfully imported {success_count} matches")
-            if error_count > 0:
-                st.warning(f"⚠️ Failed to import {error_count} matches")
-
-# ============================================================================
-# PERFORMANCE MODE
-# ============================================================================
-
-def performance_mode():
-    st.markdown('<div class="sub-header">📈 PERFORMANCE TRACKING</div>', unsafe_allow_html=True)
-    
-    st.info("Performance tracking will populate as you save more matches.")
-    
-    # Performance metrics
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Overall Accuracy", "0%", "0%")
-    
-    with col2:
-        st.metric("BTTS Accuracy", "0%", "0%")
-    
-    with col3:
-        st.metric("Over Accuracy", "0%", "0%")
-    
-    st.markdown("---")
-    
-    # Rule performance table placeholder
-    st.markdown("### 📊 RULE PERFORMANCE (Sample Data)")
-    
-    rule_perf = pd.DataFrame([
-        {"Rule": "rule_15", "Predicted": "72%", "Actual": "69%", "Variance": "-3%", "ROI": "+18%"},
-        {"Rule": "rule_2", "Predicted": "68%", "Actual": "71%", "Variance": "+3%", "ROI": "+22%"},
-        {"Rule": "rule_7", "Predicted": "42%", "Actual": "36%", "Variance": "-6%", "ROI": "-8%"},
-        {"Rule": "rule_1", "Predicted": "28%", "Actual": "22%", "Variance": "-6%", "ROI": "+12%"},
-        {"Rule": "rule_22", "Predicted": "15%", "Actual": "9%", "Variance": "-6%", "ROI": "+24%"},
-    ])
-    
-    st.dataframe(rule_perf, use_container_width=True, hide_index=True)
-
-# ============================================================================
-# ENTRY POINT
-# ============================================================================
 
 if __name__ == "__main__":
     main()
