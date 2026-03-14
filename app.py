@@ -24,101 +24,8 @@ def init_supabase():
         return None
 
 # ============================================================================
-# DATA LOADING FUNCTIONS
+# DATA SAVING FUNCTIONS
 # ============================================================================
-
-@st.cache_data(ttl=300)
-def load_teams():
-    """Load all teams from database"""
-    supabase = init_supabase()
-    if not supabase:
-        return pd.DataFrame()
-    
-    try:
-        # Get home teams
-        home_response = supabase.table('matches').select('home_team').execute()
-        away_response = supabase.table('matches').select('away_team').execute()
-        
-        home_teams = [r['home_team'] for r in home_response.data]
-        away_teams = [r['away_team'] for r in away_response.data]
-        
-        teams = sorted(set(home_teams + away_teams))
-        return pd.DataFrame({'team': teams})
-    except Exception as e:
-        st.error(f"Error loading teams: {e}")
-        return pd.DataFrame()
-
-@st.cache_data(ttl=300)
-def load_patterns():
-    """Load all patterns from database"""
-    supabase = init_supabase()
-    if not supabase:
-        return pd.DataFrame()
-    
-    try:
-        response = supabase.table('pattern_tracking')\
-            .select('pattern_code, current_over_rate, current_btts_rate, total_matches, confidence_score')\
-            .gte('total_matches', 5)\
-            .order('confidence_score', desc=True)\
-            .execute()
-        
-        return pd.DataFrame(response.data)
-    except Exception as e:
-        st.error(f"Error loading patterns: {e}")
-        return pd.DataFrame()
-
-@st.cache_data(ttl=300)
-def load_team_stats(team, match_date):
-    """Load team statistics up to a given date"""
-    supabase = init_supabase()
-    if not supabase:
-        return {}
-    
-    try:
-        # Get matches where team played before the given date
-        response = supabase.table('matches')\
-            .select('home_da, away_da, home_btts, away_btts, home_over, away_over, actual_goals, actual_btts, match_date')\
-            .or_(f'home_team.eq.{team},away_team.eq.{team}')\
-            .lt('match_date', match_date.isoformat())\
-            .eq('result_entered', True)\
-            .order('match_date', desc=True)\
-            .limit(10)\
-            .execute()
-        
-        matches = response.data
-        if not matches:
-            return {}
-        
-        # Calculate team-specific stats
-        da_values = []
-        btts_values = []
-        over_values = []
-        goals = []
-        btts_actual = []
-        
-        for m in matches:
-            if m['home_team'] == team:
-                da_values.append(m['home_da'] or 50)
-                btts_values.append(m['home_btts'] or 50)
-                over_values.append(m['home_over'] or 50)
-            else:
-                da_values.append(m['away_da'] or 50)
-                btts_values.append(m['away_btts'] or 50)
-                over_values.append(m['away_over'] or 50)
-            
-            goals.append(m['actual_goals'] or 0)
-            btts_actual.append(1 if m['actual_btts'] else 0)
-        
-        return {
-            'avg_da': np.mean(da_values),
-            'avg_btts': np.mean(btts_values),
-            'avg_over': np.mean(over_values),
-            'avg_goals': np.mean(goals),
-            'btts_rate': np.mean(btts_actual)
-        }
-    except Exception as e:
-        st.error(f"Error loading team stats: {e}")
-        return {}
 
 def save_match_data(match_data):
     """Save match data to Supabase"""
@@ -137,21 +44,37 @@ def save_match_data(match_data):
         
         existing = response.data
         
+        # Calculate tier based on DA values (1-4 scale)
+        def calculate_tier(value):
+            if value >= 70: return 1
+            if value >= 55: return 2
+            if value >= 40: return 3
+            return 4
+        
         if existing:
             # Update existing match
             response = supabase.table('matches')\
                 .update({
                     'home_da': match_data['home_da'],
                     'away_da': match_data['away_da'],
+                    'home_da_tier': calculate_tier(match_data['home_da']),
+                    'away_da_tier': calculate_tier(match_data['away_da']),
                     'home_btts': match_data['home_btts'],
                     'away_btts': match_data['away_btts'],
+                    'home_btts_tier': calculate_tier(match_data['home_btts']),
+                    'away_btts_tier': calculate_tier(match_data['away_btts']),
                     'home_over': match_data['home_over'],
                     'away_over': match_data['away_over'],
+                    'home_over_tier': calculate_tier(match_data['home_over']),
+                    'away_over_tier': calculate_tier(match_data['away_over']),
                     'home_goals': match_data['home_goals'],
                     'away_goals': match_data['away_goals'],
                     'actual_goals': match_data['home_goals'] + match_data['away_goals'],
                     'actual_btts': match_data['home_goals'] > 0 and match_data['away_goals'] > 0,
-                    'result_entered': True
+                    'result_entered': True,
+                    'btts_pressure_flag': match_data['btts_pressure_flag'],
+                    'overs_pressure_flag': match_data['overs_pressure_flag'],
+                    'importance_score': match_data.get('importance_score', 0)
                 })\
                 .eq('id', existing[0]['id'])\
                 .execute()
@@ -161,19 +84,28 @@ def save_match_data(match_data):
                 .insert({
                     'home_team': match_data['home_team'],
                     'away_team': match_data['away_team'],
-                    'league': match_data.get('league', 'UNKNOWN'),
+                    'league': match_data.get('league', 'MANUAL ENTRY'),
                     'match_date': match_data['match_date'].isoformat(),
                     'home_da': match_data['home_da'],
                     'away_da': match_data['away_da'],
+                    'home_da_tier': calculate_tier(match_data['home_da']),
+                    'away_da_tier': calculate_tier(match_data['away_da']),
                     'home_btts': match_data['home_btts'],
                     'away_btts': match_data['away_btts'],
+                    'home_btts_tier': calculate_tier(match_data['home_btts']),
+                    'away_btts_tier': calculate_tier(match_data['away_btts']),
                     'home_over': match_data['home_over'],
                     'away_over': match_data['away_over'],
+                    'home_over_tier': calculate_tier(match_data['home_over']),
+                    'away_over_tier': calculate_tier(match_data['away_over']),
                     'home_goals': match_data['home_goals'],
                     'away_goals': match_data['away_goals'],
                     'actual_goals': match_data['home_goals'] + match_data['away_goals'],
                     'actual_btts': match_data['home_goals'] > 0 and match_data['away_goals'] > 0,
                     'result_entered': True,
+                    'btts_pressure_flag': match_data['btts_pressure_flag'],
+                    'overs_pressure_flag': match_data['overs_pressure_flag'],
+                    'importance_score': match_data.get('importance_score', 0),
                     'created_at': datetime.now().isoformat()
                 })\
                 .execute()
@@ -219,22 +151,6 @@ class BettingPredictor:
                 'category': 'OVER',
                 'name': '🔥 TRIPLE CROWN = OVER 2.5'
             },
-            'rule_17': {   # Championship Home Win
-                'btts_lift': 0.214,
-                'over_lift': 0.234,
-                'confidence': 'LOW',
-                'sample': 7,
-                'category': 'OUTCOME',
-                'name': '🏴󰁧󰁢󰁳󰁿󰁴󰁿 CHAMPIONSHIP = HOME WIN'
-            },
-            'rule_5': {    # Home Advantage Flag
-                'btts_lift': -0.214,
-                'over_lift': -0.051,
-                'confidence': 'LOW',
-                'sample': 7,
-                'category': 'OUTCOME',
-                'name': '🏠 HOME ADVANTAGE = NO DRAW'
-            },
             'rule_7': {    # Mixed Defense
                 'btts_lift': -0.138,
                 'over_lift': -0.045,
@@ -242,14 +158,6 @@ class BettingPredictor:
                 'sample': 69,
                 'category': 'OUTCOME',
                 'name': '🔄 MIXED DEFENSE = WINNER'
-            },
-            'rule_8': {    # Weak Away
-                'btts_lift': -0.111,
-                'over_lift': -0.036,
-                'confidence': 'MEDIUM',
-                'sample': 18,
-                'category': 'UNDER',
-                'name': '🚫 WEAK AWAY = UNDER 2.5'
             },
             'rule_2': {    # Away Elite Attack
                 'btts_lift': -0.079,
@@ -266,14 +174,6 @@ class BettingPredictor:
                 'sample': 32,
                 'category': 'OUTCOME',
                 'name': '🎯 HOME ELITE ATTACK = WIN/DRAW'
-            },
-            'rule_20_away': {  # Away Elite Attack (Draw version)
-                'btts_lift': 0.000,
-                'over_lift': 0.051,
-                'confidence': 'HIGH',
-                'sample': 32,
-                'category': 'OUTCOME',
-                'name': '🎯 AWAY ELITE ATTACK = WIN/DRAW'
             },
             'rule_1': {    # [4,4] Defenses
                 'btts_lift': 0.028,
@@ -471,29 +371,6 @@ def probability_gauge(prob, title, edge=None):
     
     return fig
 
-def create_da_slider(label, default_value, avg_value, key):
-    """Create a styled DA slider with average indicator"""
-    col1, col2, col3 = st.columns([3, 1, 1])
-    
-    with col1:
-        value = st.slider(
-            label,
-            min_value=0,
-            max_value=100,
-            value=default_value,
-            key=key,
-            help=f"Historical avg: {avg_value:.1f}"
-        )
-    
-    with col2:
-        st.metric("Current", f"{value:.0f}")
-    
-    with col3:
-        st.metric("Avg", f"{avg_value:.1f}", 
-                  delta=f"{value - avg_value:.1f}")
-    
-    return value
-
 # ============================================================================
 # MAIN APP
 # ============================================================================
@@ -573,9 +450,9 @@ def main():
         
         if app_mode == "📝 Input Match Data":
             st.markdown("## 📋 QUICK STATS")
-            st.metric("Matches Today", "12")
-            st.metric("Avg Edge Found", "+18%")
-            st.metric("Patterns Active", "24")
+            st.metric("Matches Today", "0")
+            st.metric("Avg Edge Found", "0%")
+            st.metric("Patterns Active", "0")
     
     # Main content based on mode
     if app_mode == "📝 Input Match Data":
@@ -590,73 +467,36 @@ def main():
         performance_mode()
 
 # ============================================================================
-# INPUT MODE
+# INPUT MODE - MANUAL ENTRY
 # ============================================================================
 
 def input_mode():
-    st.markdown('<div class="sub-header">📝 MATCH DATA INPUT</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">📝 MANUAL MATCH DATA INPUT</div>', unsafe_allow_html=True)
     
-    # Load teams
-    teams_df = load_teams()
-    teams = teams_df['team'].tolist() if not teams_df.empty else []
-    
-    # Main input form
+    # Main input form - ALL MANUAL
     with st.form("match_input_form"):
+        st.markdown("### 🏆 MATCH INFORMATION")
+        
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("### 🏠 HOME TEAM")
-            home_team = st.selectbox("Select Home Team", teams, key="home_team", index=0 if teams else None)
+            home_team = st.text_input("Home Team Name", value="", placeholder="e.g., Arsenal")
             match_date = st.date_input("Match Date", datetime.now())
             
         with col2:
-            st.markdown("### ✈️ AWAY TEAM")
-            away_team = st.selectbox("Select Away Team", teams, key="away_team", index=min(1, len(teams)-1) if teams else None)
-            league = st.text_input("League", "PREMIER LEAGUE")
+            away_team = st.text_input("Away Team Name", value="", placeholder="e.g., Chelsea")
+            league = st.text_input("League", value="", placeholder="e.g., PREMIER LEAGUE")
         
         st.markdown("---")
+        st.markdown("### ⚡ DANGEROUS ATTACK (DA) - Enter values 0-100")
         
-        # Load historical averages
-        home_stats = load_team_stats(home_team, match_date) if home_team else {}
-        away_stats = load_team_stats(away_team, match_date) if away_team else {}
-        
-        st.markdown("### ⚡ DANGEROUS ATTACK (DA)")
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("**HOME DA**")
-            home_da = st.slider(
-                "Home DA Value",
-                min_value=0,
-                max_value=100,
-                value=int(home_stats.get('avg_da', 50)),
-                help=f"Historical avg: {home_stats.get('avg_da', 50):.1f}"
-            )
-            
-            # Show visual comparison
-            avg_home_da = home_stats.get('avg_da', 50)
-            diff_home = home_da - avg_home_da
-            if abs(diff_home) > 20:
-                st.warning(f"⚠️ {diff_home:+.1f} vs historical avg")
-            else:
-                st.info(f"📊 Within {abs(diff_home):.1f} of historical avg")
+            home_da = st.number_input("Home DA Value", min_value=0, max_value=100, value=50, step=1)
         
         with col2:
-            st.markdown("**AWAY DA**")
-            away_da = st.slider(
-                "Away DA Value",
-                min_value=0,
-                max_value=100,
-                value=int(away_stats.get('avg_da', 50)),
-                help=f"Historical avg: {away_stats.get('avg_da', 50):.1f}"
-            )
-            
-            avg_away_da = away_stats.get('avg_da', 50)
-            diff_away = away_da - avg_away_da
-            if abs(diff_away) > 20:
-                st.warning(f"⚠️ {diff_away:+.1f} vs historical avg")
-            else:
-                st.info(f"📊 Within {abs(diff_away):.1f} of historical avg")
+            away_da = st.number_input("Away DA Value", min_value=0, max_value=100, value=50, step=1)
         
         st.markdown("---")
         st.markdown("### 🎯 BOTH TEAMS TO SCORE (BTTS)")
@@ -672,12 +512,12 @@ def input_mode():
             )
         
         with col2:
-            home_btts = st.number_input("Home BTTS %", min_value=0, max_value=100, 
-                                       value=int(home_stats.get('avg_btts', 50)))
+            home_btts = st.number_input("Home BTTS %", min_value=0, max_value=100, value=50, step=1,
+                                       help="Your confidence % that Home team will score")
         
         with col3:
-            away_btts = st.number_input("Away BTTS %", min_value=0, max_value=100,
-                                       value=int(away_stats.get('avg_btts', 50)))
+            away_btts = st.number_input("Away BTTS %", min_value=0, max_value=100, value=50, step=1,
+                                       help="Your confidence % that Away team will score")
         
         st.markdown("---")
         st.markdown("### ⚽ OVER/UNDER")
@@ -696,8 +536,8 @@ def input_mode():
             )
         
         with col3:
-            over_value = st.number_input("Over %", min_value=0, max_value=100,
-                                       value=int((home_stats.get('avg_over', 50) + away_stats.get('avg_over', 50)) / 2))
+            over_value = st.number_input("Over %", min_value=0, max_value=100, value=50, step=1,
+                                       help="Your confidence % for Over")
         
         st.markdown("---")
         st.markdown("### 🏆 PRESSURE FLAGS")
@@ -711,7 +551,7 @@ def input_mode():
             overs_pressure = st.checkbox("Overs Pressure Flag", value=False)
         
         st.markdown("---")
-        st.markdown("### 📝 RULE HITS (Optional)")
+        st.markdown("### 📝 RULE HITS (Select rules that apply)")
         
         rule_options = [
             "rule_1", "rule_2", "rule_7", "rule_8", "rule_10", 
@@ -724,6 +564,20 @@ def input_mode():
         rule_hits = {}
         for rule in selected_rules:
             rule_hits[rule] = {"hit": True}
+        
+        st.markdown("---")
+        st.markdown("### ⚽ FINAL SCORE (Enter after match)")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            home_goals = st.number_input("Home Goals", min_value=0, max_value=20, value=0, step=1)
+        
+        with col2:
+            away_goals = st.number_input("Away Goals", min_value=0, max_value=20, value=0, step=1)
+        
+        importance_score = st.slider("Importance Score (0-2)", min_value=0, max_value=2, value=0, step=1,
+                                     help="0=Normal, 1=Important, 2=Very Important (derby/playoff)")
         
         # Submit buttons
         st.markdown("---")
@@ -741,21 +595,16 @@ def input_mode():
     # Handle form submission
     if generate_pred:
         with st.spinner("Generating prediction..."):
-            # Convert inputs
-            home_da_val = float(home_da)
-            away_da_val = float(away_da)
-            home_btts_val = float(home_btts)
-            away_btts_val = float(away_btts)
-            
             # Generate prediction
             prediction = st.session_state.predictor.predict(
-                home_da=home_da_val,
-                away_da=away_da_val,
-                home_btts=home_btts_val,
-                away_btts=away_btts_val,
+                home_da=float(home_da),
+                away_da=float(away_da),
+                home_btts=float(home_btts),
+                away_btts=float(away_btts),
                 btts_pressure_flag=btts_pressure,
                 overs_pressure_flag=overs_pressure,
-                rule_hits=rule_hits
+                rule_hits=rule_hits,
+                importance_score=importance_score
             )
             
             # Store in session state
@@ -764,22 +613,25 @@ def input_mode():
     
     if save_match or save_and_new:
         if not home_team or not away_team:
-            st.error("Please select both teams")
+            st.error("Please enter both team names")
         else:
             # Prepare match data
             match_data = {
-                'home_team': home_team,
-                'away_team': away_team,
-                'league': league,
+                'home_team': home_team.strip(),
+                'away_team': away_team.strip(),
+                'league': league.strip() if league else "MANUAL ENTRY",
                 'match_date': match_date,
                 'home_da': float(home_da),
                 'away_da': float(away_da),
-                'home_btts': float(home_btts if btts_prediction == "YES" else 100 - float(home_btts)),
-                'away_btts': float(away_btts if btts_prediction == "YES" else 100 - float(away_btts)),
-                'home_over': float(over_value if over_prediction == "OVER" else 100 - float(over_value)),
-                'away_over': float(over_value if over_prediction == "OVER" else 100 - float(over_value)),
-                'home_goals': 0,  # To be filled later
-                'away_goals': 0
+                'home_btts': float(home_btts),
+                'away_btts': float(away_btts),
+                'home_over': float(over_value),
+                'away_over': float(over_value),
+                'home_goals': int(home_goals),
+                'away_goals': int(away_goals),
+                'btts_pressure_flag': btts_pressure,
+                'overs_pressure_flag': overs_pressure,
+                'importance_score': importance_score
             }
             
             # Save to database
@@ -816,7 +668,7 @@ def display_prediction(prediction):
             use_container_width=True
         )
         st.metric(
-            "Edge vs Market",
+            "Edge vs 50% Baseline",
             f"{prediction['btts']['edge']*100:+.1f}%",
             delta_color="normal"
         )
@@ -831,7 +683,7 @@ def display_prediction(prediction):
             use_container_width=True
         )
         st.metric(
-            "Edge vs Market",
+            "Edge vs 48% Baseline",
             f"{prediction['over_2_5']['edge']*100:+.1f}%",
             delta_color="normal"
         )
@@ -865,21 +717,24 @@ def display_prediction(prediction):
     # Evidence panel
     st.markdown("### 🕵️ KEY FACTORS")
     
-    for evidence in prediction['evidence']:
-        confidence_icon = {
-            'HIGH': '🟢',
-            'MEDIUM': '🟡',
-            'LOW': '🔴'
-        }.get(evidence.get('confidence', 'LOW'), '⚪')
-        
-        with st.container():
-            st.markdown(f"""
-            <div class="rule-highlight">
-                <strong>{evidence['factor']}</strong><br>
-                Impact: {evidence['impact']} {confidence_icon}<br>
-                <small>Sample: {evidence.get('sample_size', 'N/A')} matches</small>
-            </div>
-            """, unsafe_allow_html=True)
+    if prediction['evidence']:
+        for evidence in prediction['evidence']:
+            confidence_icon = {
+                'HIGH': '🟢',
+                'MEDIUM': '🟡',
+                'LOW': '🔴'
+            }.get(evidence.get('confidence', 'LOW'), '⚪')
+            
+            with st.container():
+                st.markdown(f"""
+                <div class="rule-highlight">
+                    <strong>{evidence['factor']}</strong><br>
+                    Impact: {evidence['impact']} {confidence_icon}<br>
+                    <small>Sample: {evidence.get('sample_size', 'N/A')} matches</small>
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.info("No rules activated. Add rule hits to see their impact.")
     
     # Recommended bets
     if prediction.get('recommended_bets'):
@@ -897,33 +752,12 @@ def display_prediction(prediction):
 def predictions_mode():
     st.markdown('<div class="sub-header">🔮 ALL PREDICTIONS</div>', unsafe_allow_html=True)
     
-    # Filter sidebar
-    with st.sidebar:
-        st.markdown("## 🔍 FILTERS")
-        
-        min_edge = st.slider("Minimum Edge %", 0, 50, 10)
-        confidence_filter = st.multiselect(
-            "Confidence Level",
-            ["HIGH", "MEDIUM", "LOW"],
-            default=["HIGH", "MEDIUM"]
-        )
-        
-        st.markdown("## 📊 SORT BY")
-        sort_by = st.radio(
-            "Sort by",
-            ["Edge", "Confidence", "Date"]
-        )
-    
-    # Load predictions (placeholder - would come from DB)
-    predictions = []
-    
-    if not predictions:
-        st.info("No predictions available. Enter match data first.")
-        
-        # Show sample predictions from session
-        if st.session_state.get('current_prediction'):
-            st.markdown("### Current Match Prediction")
-            display_prediction(st.session_state.current_prediction)
+    # Show sample predictions from session
+    if st.session_state.get('current_prediction'):
+        st.markdown("### Current Match Prediction")
+        display_prediction(st.session_state.current_prediction)
+    else:
+        st.info("No predictions available. Enter match data in Input Mode first.")
 
 # ============================================================================
 # DASHBOARD MODE
@@ -932,24 +766,27 @@ def predictions_mode():
 def dashboard_mode():
     st.markdown('<div class="sub-header">📊 STATISTICAL DASHBOARD</div>', unsafe_allow_html=True)
     
+    st.info("Dashboard will populate as you add more matches to the database.")
+    
+    # Placeholder charts
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Total Matches", "195", "+12 today")
+        st.metric("Total Matches", "0", "0")
     
     with col2:
-        st.metric("BTTS Rate", "52%", "+2%")
+        st.metric("BTTS Rate", "0%", "0%")
     
     with col3:
-        st.metric("Over 2.5 Rate", "48%", "-1%")
+        st.metric("Over 2.5 Rate", "0%", "0%")
     
     with col4:
-        st.metric("Active Patterns", "24", "+3")
+        st.metric("Active Patterns", "0", "0")
     
     st.markdown("---")
     
-    # Rule effectiveness chart
-    st.markdown("### 📈 RULE EFFECTIVENESS")
+    # Rule effectiveness chart placeholder
+    st.markdown("### 📈 RULE EFFECTIVENESS (Sample Data)")
     
     rule_data = pd.DataFrame([
         {"rule": "rule_15", "btts_edge": 0.190, "over_edge": 0.244, "confidence": "HIGH"},
@@ -965,24 +802,12 @@ def dashboard_mode():
         x="rule",
         y=["btts_edge", "over_edge"],
         barmode="group",
-        title="Rule Edge Analysis",
+        title="Rule Edge Analysis (Based on Historical Data)",
         labels={"value": "Edge", "variable": "Metric"},
         color_discrete_map={"btts_edge": "blue", "over_edge": "red"}
     )
     
     st.plotly_chart(fig, use_container_width=True)
-    
-    # Pattern tracking
-    st.markdown("---")
-    st.markdown("### 🎯 PATTERN TRACKING")
-    
-    patterns_df = load_patterns()
-    if not patterns_df.empty:
-        st.dataframe(
-            patterns_df,
-            use_container_width=True,
-            hide_index=True
-        )
 
 # ============================================================================
 # BATCH IMPORT MODE
@@ -995,15 +820,39 @@ def batch_import_mode():
     Upload a CSV file with the following columns:
     - home_team
     - away_team
-    - match_date
-    - home_da
-    - away_da
+    - match_date (YYYY-MM-DD)
+    - home_da (0-100)
+    - away_da (0-100)
     - btts_prediction (YES/NO)
-    - over_line
+    - over_line (2.5, etc.)
     - over_prediction (OVER/UNDER)
     - home_goals (optional)
     - away_goals (optional)
+    - league (optional)
     """)
+    
+    # Template download
+    template_df = pd.DataFrame({
+        'home_team': ['Arsenal', 'Liverpool'],
+        'away_team': ['Chelsea', 'Man City'],
+        'match_date': ['2024-03-15', '2024-03-16'],
+        'home_da': [65, 72],
+        'away_da': [58, 68],
+        'btts_prediction': ['YES', 'NO'],
+        'over_line': [2.5, 2.5],
+        'over_prediction': ['OVER', 'UNDER'],
+        'home_goals': [2, 0],
+        'away_goals': [1, 1],
+        'league': ['EPL', 'EPL']
+    })
+    
+    csv = template_df.to_csv(index=False)
+    st.download_button(
+        label="📥 Download Template CSV",
+        data=csv,
+        file_name="match_import_template.csv",
+        mime="text/csv"
+    )
     
     uploaded_file = st.file_uploader("Choose CSV file", type="csv")
     
@@ -1024,18 +873,21 @@ def batch_import_mode():
                     status_text.text(f"Processing row {idx + 1}/{len(df)}")
                     
                     match_data = {
-                        'home_team': row['home_team'],
-                        'away_team': row['away_team'],
-                        'league': row.get('league', 'UNKNOWN'),
+                        'home_team': str(row['home_team']),
+                        'away_team': str(row['away_team']),
+                        'league': str(row.get('league', 'BATCH IMPORT')),
                         'match_date': pd.to_datetime(row['match_date']).date(),
                         'home_da': float(row['home_da']),
                         'away_da': float(row['away_da']),
-                        'home_btts': 70 if row['btts_prediction'].upper() == 'YES' else 30,
-                        'away_btts': 70 if row['btts_prediction'].upper() == 'YES' else 30,
-                        'home_over': 70 if row['over_prediction'].upper() == 'OVER' else 30,
-                        'away_over': 70 if row['over_prediction'].upper() == 'OVER' else 30,
+                        'home_btts': 70 if str(row['btts_prediction']).upper() == 'YES' else 30,
+                        'away_btts': 70 if str(row['btts_prediction']).upper() == 'YES' else 30,
+                        'home_over': 70 if str(row['over_prediction']).upper() == 'OVER' else 30,
+                        'away_over': 70 if str(row['over_prediction']).upper() == 'OVER' else 30,
                         'home_goals': int(row.get('home_goals', 0)),
-                        'away_goals': int(row.get('away_goals', 0))
+                        'away_goals': int(row.get('away_goals', 0)),
+                        'btts_pressure_flag': False,
+                        'overs_pressure_flag': False,
+                        'importance_score': 0
                     }
                     
                     if save_match_data(match_data):
@@ -1061,22 +913,24 @@ def batch_import_mode():
 def performance_mode():
     st.markdown('<div class="sub-header">📈 PERFORMANCE TRACKING</div>', unsafe_allow_html=True)
     
+    st.info("Performance tracking will populate as you save more matches.")
+    
     # Performance metrics
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.metric("Overall Accuracy", "67%", "+5%")
+        st.metric("Overall Accuracy", "0%", "0%")
     
     with col2:
-        st.metric("BTTS Accuracy", "71%", "+3%")
+        st.metric("BTTS Accuracy", "0%", "0%")
     
     with col3:
-        st.metric("Over Accuracy", "64%", "+2%")
+        st.metric("Over Accuracy", "0%", "0%")
     
     st.markdown("---")
     
-    # Rule performance table
-    st.markdown("### 📊 RULE PERFORMANCE")
+    # Rule performance table placeholder
+    st.markdown("### 📊 RULE PERFORMANCE (Sample Data)")
     
     rule_perf = pd.DataFrame([
         {"Rule": "rule_15", "Predicted": "72%", "Actual": "69%", "Variance": "-3%", "ROI": "+18%"},
@@ -1087,33 +941,6 @@ def performance_mode():
     ])
     
     st.dataframe(rule_perf, use_container_width=True, hide_index=True)
-    
-    # Calibration chart
-    st.markdown("### 📈 PREDICTION CALIBRATION")
-    
-    calibration_data = pd.DataFrame({
-        "Predicted": [10, 20, 30, 40, 50, 60, 70, 80, 90],
-        "Actual": [8, 18, 28, 42, 52, 63, 72, 81, 87]
-    })
-    
-    fig = px.line(
-        calibration_data, 
-        x="Predicted", 
-        y="Actual",
-        title="Calibration Curve (Ideal = Diagonal)",
-        labels={"Predicted": "Predicted Probability %", "Actual": "Actual Outcome %"}
-    )
-    
-    # Add diagonal line
-    fig.add_scatter(
-        x=[0, 100], 
-        y=[0, 100], 
-        mode="lines", 
-        name="Ideal",
-        line=dict(dash="dash", color="gray")
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
 
 # ============================================================================
 # ENTRY POINT
