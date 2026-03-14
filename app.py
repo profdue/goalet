@@ -396,39 +396,75 @@ def main():
                 - **Away BTTS:** Tier {away_btts_tier} ({get_tier_description(away_btts_tier, 'btts')})
                 - **Importance:** {['Low', 'Medium', 'High'][importance]}
                 """)
-            
             # Enter result
-            st.markdown("---")
-            st.subheader("📥 Enter Result")
+st.markdown("---")
+st.subheader("📥 Enter Result")
+
+# Use session state to preserve values
+if 'home_goals_input' not in st.session_state:
+    st.session_state.home_goals_input = 0
+if 'away_goals_input' not in st.session_state:
+    st.session_state.away_goals_input = 0
+
+col_r1, col_r2, col_r3 = st.columns([1, 1, 2])
+with col_r1:
+    home_goals = st.number_input(
+        f"{home_team} Goals", 
+        0, 10, 
+        value=st.session_state.home_goals_input,
+        key="home_goals_field"
+    )
+with col_r2:
+    away_goals = st.number_input(
+        f"{away_team} Goals", 
+        0, 10, 
+        value=st.session_state.away_goals_input,
+        key="away_goals_field"
+    )
+with col_r3:
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    col_save, col_clear = st.columns(2)
+    with col_save:
+        if st.button("💾 SAVE", type="primary", use_container_width=True):
+            # Store in session state
+            st.session_state.home_goals_input = home_goals
+            st.session_state.away_goals_input = away_goals
             
-            col_r1, col_r2, col_r3 = st.columns([1, 1, 2])
-            with col_r1:
-                home_goals = st.number_input(f"{home_team} Goals", 0, 10, 0)
-            with col_r2:
-                away_goals = st.number_input(f"{away_team} Goals", 0, 10, 0)
-            with col_r3:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("💾 SAVE", type="primary"):
-                    match_data = {
-                        'home_team': home_team,
-                        'away_team': away_team,
-                        'league': league,
-                        'home_da': home_da,
-                        'away_da': away_da,
-                        'home_btts': home_btts,
-                        'away_btts': away_btts,
-                        'home_over': home_over,
-                        'away_over': away_over,
-                        'elite': elite,
-                        'derby': derby,
-                        'relegation': relegation,
-                        'notes': notes
-                    }
-                    saved = save_match(match_data, home_goals, away_goals)
-                    if saved:
-                        st.success(f"✅ Saved! Intelligence updated.")
-                        st.cache_data.clear()
-                        st.rerun()
+            match_data = {
+                'home_team': home_team,
+                'away_team': away_team,
+                'league': league,
+                'match_date': datetime.now().date().isoformat(),
+                'home_da': home_da,
+                'away_da': away_da,
+                'home_btts': home_btts,
+                'away_btts': away_btts,
+                'home_over': home_over,
+                'away_over': away_over,
+                'elite': elite,
+                'derby': derby,
+                'relegation': relegation,
+                'notes': notes
+            }
+            
+            saved = save_match(match_data, home_goals, away_goals)
+            if saved:
+                st.success(f"✅ Match saved! Intelligence updated.")
+                st.cache_data.clear()
+                # Don't rerun immediately - show success message
+                st.balloons()
+                # Clear session state after successful save
+                st.session_state.home_goals_input = 0
+                st.session_state.away_goals_input = 0
+                # Optional: wait then rerun
+                st.rerun()
+    
+    with col_clear:
+        if st.button("🗑️ CLEAR", use_container_width=True):
+            st.session_state.home_goals_input = 0
+            st.session_state.away_goals_input = 0
+            st.rerun()
     
     # ===== TAB 2: GOLD PATTERNS =====
     with tab2:
